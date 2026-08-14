@@ -1,0 +1,40 @@
+stages:
+  - lint
+  - test
+  - build
+
+variables:
+  GO_VERSION: "1.26"
+  NODE_VERSION: "24"
+
+openapi:
+  image: node:${NODE_VERSION}-alpine
+  stage: lint
+  script:
+    - corepack enable
+    - pnpm install --frozen-lockfile
+    - pnpm openapi:lint
+
+api-test:
+  image: golang:${GO_VERSION}
+  stage: test
+  script:
+    - cd apps/api
+    - go test ./...
+
+web-test:
+  image: node:${NODE_VERSION}-alpine
+  stage: test
+  script:
+    - corepack enable
+    - pnpm install --frozen-lockfile
+    - pnpm --filter @splitr/web test
+
+docker-build:
+  image: docker:27
+  services:
+    - docker:27-dind
+  stage: build
+  script:
+    - docker build -f apps/api/Dockerfile -t splitr-api .
+    - docker build -f apps/web/Dockerfile -t splitr-web .

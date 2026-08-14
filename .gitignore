@@ -1,0 +1,57 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and package manager caches
+node_modules/
+.pnpm-store/
+
+# Frontend build and test output
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Vite/Vitest caches
+.vite/
+.vite-temp/
+.vitest/
+
+# Go build and test output
+bin/
+*.exe
+*.test
+*.out
+*.cover
+coverage.out
+
+# Local runtime data
+tmp/
+uploads/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Local tool caches
+.cache/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

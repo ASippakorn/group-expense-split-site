@@ -1,0 +1,11 @@
+{
+  "name": "splitr",
+  "private": true,
+  "scripts": {
+    "lint": "pnpm --filter @splitr/web lint",
+    "test": "pnpm --filter @splitr/web test",
+    "build": "pnpm --filter @splitr/web build",
+    "openapi:lint": "node scripts/validate-openapi.mjs"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

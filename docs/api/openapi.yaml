@@ -1,0 +1,326 @@
+openapi: 3.1.0
+info:
+  title: Splitr API
+  version: 0.1.0
+  description: First-slice API for registration, login, sessions, and Groups.
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /health:
+    get:
+      summary: Check API health
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /auth/register:
+    post:
+      summary: Register a User and create a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "201":
+          description: Registered User
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+  /auth/login:
+    post:
+      summary: Log in and create a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          description: Logged in User
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /auth/logout:
+    post:
+      summary: Delete the current session
+      security:
+        - sessionCookie: []
+      responses:
+        "204":
+          description: Logged out
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /me:
+    get:
+      summary: Read the current User
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /groups:
+    get:
+      summary: List Groups where the current User is a Participant
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Groups visible to the User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    post:
+      summary: Create a Group owned by the current User
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupRequest"
+      responses:
+        "201":
+          description: Created Group
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group]
+                properties:
+                  group:
+                    $ref: "#/components/schemas/Group"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /groups/{groupId}/participants:
+    get:
+      summary: List Participants for a Group
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Participants visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [participants]
+                properties:
+                  participants:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Participant"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      summary: Add one registered User to a Group by email
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddParticipantRequest"
+      responses:
+        "201":
+          description: Added Participant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [participant]
+                properties:
+                  participant:
+                    $ref: "#/components/schemas/Participant"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  parameters:
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: splitr_session
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthenticated:
+      description: Missing or invalid session
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: User cannot perform this action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Request conflicts with existing state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    AuthRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    CreateGroupRequest:
+      type: object
+      required: [name, defaultCurrency]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        defaultCurrency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: THB
+        description:
+          type: string
+    AddParticipantRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    UserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+    Group:
+      type: object
+      required: [id, name, defaultCurrency, description, ownerId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        defaultCurrency:
+          type: string
+          example: THB
+        description:
+          type: string
+        ownerId:
+          type: string
+          format: uuid
+    Participant:
+      type: object
+      required: [id, user, role, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          $ref: "#/components/schemas/User"
+        role:
+          type: string
+          enum: [owner, participant]
+        active:
+          type: boolean
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_FAILED
+            message:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string

@@ -1,0 +1,89 @@
+package domain
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+const (
+	RoleOwner       = "owner"
+	RoleParticipant = "participant"
+	DefaultCurrency = "THB"
+)
+
+type User struct {
+	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	Email        string    `gorm:"uniqueIndex;not null"`
+	PasswordHash string    `gorm:"not null"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (u *User) BeforeCreate(_ *gorm.DB) error {
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
+	}
+	return nil
+}
+
+type Session struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null;index"`
+	User      User
+	ExpiresAt time.Time `gorm:"not null;index"`
+	CreatedAt time.Time
+}
+
+func (s *Session) BeforeCreate(_ *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
+	}
+	return nil
+}
+
+type Group struct {
+	ID              uuid.UUID     `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	Name            string        `gorm:"not null"`
+	DefaultCurrency string        `gorm:"type:char(3);not null;default:THB"`
+	Description     string        `gorm:"not null;default:''"`
+	OwnerID         uuid.UUID     `gorm:"type:uuid;not null;index"`
+	Owner           User          `gorm:"foreignKey:OwnerID"`
+	Participants    []Participant `gorm:"foreignKey:GroupID"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DeletedAt       gorm.DeletedAt `gorm:"index"`
+}
+
+func (g *Group) BeforeCreate(_ *gorm.DB) error {
+	if g.ID == uuid.Nil {
+		g.ID = uuid.New()
+	}
+	if g.DefaultCurrency == "" {
+		g.DefaultCurrency = DefaultCurrency
+	}
+	return nil
+}
+
+type Participant struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID   uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_participant_group_user"`
+	Group     Group
+	UserID    uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_participant_group_user"`
+	User      User
+	Role      string `gorm:"not null"`
+	Active    bool   `gorm:"not null;default:true"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (p *Participant) BeforeCreate(_ *gorm.DB) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	if p.Role == "" {
+		p.Role = RoleParticipant
+	}
+	return nil
+}
