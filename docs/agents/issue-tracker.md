@@ -1,6 +1,8 @@
 # Issue tracker: Local Markdown
 
-Issues and specs for this repo live as markdown files in `.scratch/`.
+Issues and specs for active agent work live as markdown files in `.scratch/`.
+
+GitHub Issues in `ASippakorn/group-expense-split-site` contains a migrated mirror of the current tickets for later use, but it is not the active source of truth yet. When working tickets now, update `.scratch/` first. If you also update GitHub, keep it in sync with the local ticket.
 
 ## Conventions
 
@@ -8,7 +10,9 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - The spec is `.scratch/<feature-slug>/spec.md`
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`; never a single combined tickets file
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
+- Blockers are recorded as a `Blocked by:` line near the top of each issue file
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- The migrated GitHub mirror uses issues `#1` through `#11`; issue `#1` is already closed
 
 ## When a skill says "publish to the issue tracker"
 

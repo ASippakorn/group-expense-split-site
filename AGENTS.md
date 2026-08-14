@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+Issues are actively worked from local markdown files under `.scratch/<feature-slug>/`. GitHub Issues mirrors the migrated tickets for later use. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
