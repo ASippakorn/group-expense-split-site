@@ -11,7 +11,14 @@ if (!existsSync(specPath)) {
 }
 
 const spec = readFileSync(specPath, "utf8");
-const required = ["openapi: 3.1.0", "/health:", "/auth/register:", "/groups:", "/groups/{groupId}/participants:"];
+const required = [
+  "openapi: 3.1.0",
+  "/health:",
+  "/auth/register:",
+  "/groups:",
+  "/groups/{groupId}/participants:",
+  "/groups/{groupId}/expenses:",
+];
 const missing = required.filter((needle) => !spec.includes(needle));
 
 if (missing.length > 0) {

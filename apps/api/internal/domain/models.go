@@ -11,6 +11,7 @@ const (
 	RoleOwner       = "owner"
 	RoleParticipant = "participant"
 	DefaultCurrency = "THB"
+	SplitTypeEqual  = "equal"
 )
 
 type User struct {
@@ -84,6 +85,52 @@ func (p *Participant) BeforeCreate(_ *gorm.DB) error {
 	}
 	if p.Role == "" {
 		p.Role = RoleParticipant
+	}
+	return nil
+}
+
+type Expense struct {
+	ID                 uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID            uuid.UUID `gorm:"type:uuid;not null;index"`
+	Group              Group
+	PayerParticipantID uuid.UUID `gorm:"type:uuid;not null;index"`
+	PayerParticipant   Participant
+	Description        string `gorm:"not null"`
+	AmountMinor        int64  `gorm:"not null"`
+	Currency           string `gorm:"type:char(3);not null"`
+	ExpenseDate        time.Time
+	SplitType          string `gorm:"not null"`
+	Splits             []ExpenseSplit
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (e *Expense) BeforeCreate(_ *gorm.DB) error {
+	if e.ID == uuid.Nil {
+		e.ID = uuid.New()
+	}
+	if e.Currency == "" {
+		e.Currency = DefaultCurrency
+	}
+	if e.SplitType == "" {
+		e.SplitType = SplitTypeEqual
+	}
+	return nil
+}
+
+type ExpenseSplit struct {
+	ID            uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	ExpenseID     uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Expense       Expense
+	ParticipantID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Participant   Participant
+	AmountMinor   int64 `gorm:"not null"`
+	CreatedAt     time.Time
+}
+
+func (s *ExpenseSplit) BeforeCreate(_ *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
 	}
 	return nil
 }

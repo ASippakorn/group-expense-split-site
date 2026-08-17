@@ -18,6 +18,25 @@ export type Participant = {
   active: boolean;
 };
 
+export type ExpenseSplit = {
+  id: string;
+  participantId: string;
+  participant: Participant;
+  amountMinor: number;
+};
+
+export type Expense = {
+  id: string;
+  description: string;
+  amountMinor: number;
+  currency: string;
+  expenseDate: string;
+  splitType: "equal";
+  payerParticipantId: string;
+  payer: Participant;
+  splits: ExpenseSplit[];
+};
+
 type ApiError = {
   error: {
     code: string;
@@ -97,5 +116,26 @@ export function addParticipant(groupId: string, email: string) {
   return request<{ participant: Participant }>(`/groups/${groupId}/participants`, {
     method: "POST",
     body: JSON.stringify({ email }),
+  });
+}
+
+export function listExpenses(groupId: string) {
+  return request<{ expenses: Expense[] }>(`/groups/${groupId}/expenses`);
+}
+
+export function createExpense(
+  groupId: string,
+  input: {
+    description: string;
+    amountMinor: number;
+    currency: string;
+    expenseDate: string;
+    payerParticipantId: string;
+    participantIds: string[];
+  },
+) {
+  return request<{ expense: Expense }>(`/groups/${groupId}/expenses`, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }

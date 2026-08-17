@@ -122,6 +122,7 @@ func TestGroupServiceListParticipantsRequiresMembership(t *testing.T) {
 type fakeGroupStore struct {
 	usersByEmail map[string]*domain.User
 	participants map[string]*domain.Participant
+	expenses     []domain.Expense
 }
 
 func newFakeGroupStore() *fakeGroupStore {
@@ -159,6 +160,15 @@ func (s *fakeGroupStore) FindParticipant(_ context.Context, groupID, userID uuid
 	return participant, nil
 }
 
+func (s *fakeGroupStore) FindParticipantByID(_ context.Context, groupID, participantID uuid.UUID) (*domain.Participant, error) {
+	for _, participant := range s.participants {
+		if participant.GroupID == groupID && participant.ID == participantID {
+			return participant, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (s *fakeGroupStore) CreateParticipant(_ context.Context, participant *domain.Participant) error {
 	key := participantKey(participant.GroupID, participant.UserID)
 	if _, ok := s.participants[key]; ok {
@@ -178,4 +188,24 @@ func (s *fakeGroupStore) ListParticipantsForGroup(_ context.Context, groupID uui
 		}
 	}
 	return participants, nil
+}
+
+func (s *fakeGroupStore) CreateExpenseWithSplits(_ context.Context, expense *domain.Expense) error {
+	expense.ID = uuid.New()
+	for index := range expense.Splits {
+		expense.Splits[index].ID = uuid.New()
+		expense.Splits[index].ExpenseID = expense.ID
+	}
+	s.expenses = append(s.expenses, *expense)
+	return nil
+}
+
+func (s *fakeGroupStore) ListExpensesForGroup(_ context.Context, groupID uuid.UUID) ([]domain.Expense, error) {
+	expenses := make([]domain.Expense, 0)
+	for _, expense := range s.expenses {
+		if expense.GroupID == groupID {
+			expenses = append(expenses, expense)
+		}
+	}
+	return expenses, nil
 }

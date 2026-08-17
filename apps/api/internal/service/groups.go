@@ -15,8 +15,11 @@ type GroupRepository interface {
 	ListGroupsForUser(ctx context.Context, userID uuid.UUID) ([]domain.Group, error)
 	FindUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	FindParticipant(ctx context.Context, groupID, userID uuid.UUID) (*domain.Participant, error)
+	FindParticipantByID(ctx context.Context, groupID, participantID uuid.UUID) (*domain.Participant, error)
 	CreateParticipant(ctx context.Context, participant *domain.Participant) error
 	ListParticipantsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Participant, error)
+	CreateExpenseWithSplits(ctx context.Context, expense *domain.Expense) error
+	ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error)
 }
 
 type GroupService struct {

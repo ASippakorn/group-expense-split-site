@@ -26,6 +26,8 @@ docker compose up --build
 
 - `apps/api` - Go Fiber API
 - `apps/web` - React TypeScript app
+- `docs/architecture.md` - how the code is structured and how requests flow
+- `docs/development.md` - running, testing, and the ticket workflow
 - `docs/api` - OpenAPI contract
 - `deploy` - Kubernetes manifests for Minikube
 - `db/migrations` - SQL migrations

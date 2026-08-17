@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
+import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Group, Participant, User } from "./api";
+import type { Expense, Group, Participant, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -124,12 +124,20 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [participantEmail, setParticipantEmail] = useState("");
+  const [expenseDescription, setExpenseDescription] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseDate, setExpenseDate] = useState("");
+  const [payerParticipantId, setPayerParticipantId] = useState("");
+  const [expenseParticipantIds, setExpenseParticipantIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
+  const [expenseError, setExpenseError] = useState("");
   const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [expensesLoading, setExpensesLoading] = useState(false);
 
   useEffect(() => {
     api.listGroups().then(({ groups }) => setGroups(groups));
@@ -157,14 +165,20 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   async function openGroup(group: Group) {
     setSelectedGroup(group);
     setParticipantError("");
+    setExpenseError("");
     setParticipantsLoading(true);
+    setExpensesLoading(true);
     try {
-      const { participants } = await api.listParticipants(group.id);
+      const [{ participants }, { expenses }] = await Promise.all([api.listParticipants(group.id), api.listExpenses(group.id)]);
       setParticipants(participants);
+      setExpenses(expenses);
+      setPayerParticipantId(participants[0]?.id ?? "");
+      setExpenseParticipantIds(participants.map((participant) => participant.id));
     } catch (err) {
-      setParticipantError(err instanceof Error ? err.message : "Unable to load Participants.");
+      setParticipantError(err instanceof Error ? err.message : "Unable to load Group details.");
     } finally {
       setParticipantsLoading(false);
+      setExpensesLoading(false);
     }
   }
 
@@ -178,10 +192,58 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     try {
       const { participant } = await api.addParticipant(selectedGroup.id, participantEmail);
       setParticipants((current) => [...current, participant]);
+      setPayerParticipantId((current) => current || participant.id);
+      setExpenseParticipantIds((current) => (current.includes(participant.id) ? current : [...current, participant.id]));
       setParticipantEmail("");
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to add Participant.");
     }
+  }
+
+  async function submitExpense(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedGroup) {
+      return;
+    }
+
+    const amountMinor = parseMoneyMinor(expenseAmount);
+    if (
+      amountMinor === null ||
+      amountMinor <= 0 ||
+      !expenseDescription.trim() ||
+      !expenseDate ||
+      !payerParticipantId ||
+      expenseParticipantIds.length === 0 ||
+      !expenseParticipantIds.includes(payerParticipantId)
+    ) {
+      setExpenseError("Enter an Expense description, positive amount, date, Payer, and include the Payer in the Split.");
+      return;
+    }
+
+    setExpenseError("");
+    try {
+      const { expense } = await api.createExpense(selectedGroup.id, {
+        description: expenseDescription,
+        amountMinor,
+        currency: selectedGroup.defaultCurrency,
+        expenseDate,
+        payerParticipantId,
+        participantIds: expenseParticipantIds,
+      });
+      setExpenses((current) => [expense, ...current]);
+      setExpenseDescription("");
+      setExpenseAmount("");
+    } catch (err) {
+      setExpenseError(err instanceof Error ? err.message : "Unable to add Expense.");
+    }
+  }
+
+  function toggleExpenseParticipant(participantID: string) {
+    setExpenseParticipantIds((current) =>
+      current.includes(participantID)
+        ? current.filter((selectedParticipantID) => selectedParticipantID !== participantID)
+        : [...current, participantID],
+    );
   }
 
   return (
@@ -239,55 +301,170 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
           </form>
 
           {selectedGroup ? (
-            <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="participants-heading">
-              <div className="flex items-center gap-2">
-                <UserPlus aria-hidden className="text-leaf" size={20} />
-                <h2 id="participants-heading" className="text-xl font-semibold">
-                  Participants
-                </h2>
-              </div>
-              <p className="mt-1 text-sm text-ink/60">{selectedGroup.name}</p>
+            <>
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="participants-heading">
+                <div className="flex items-center gap-2">
+                  <UserPlus aria-hidden className="text-leaf" size={20} />
+                  <h2 id="participants-heading" className="text-xl font-semibold">
+                    Participants
+                  </h2>
+                </div>
+                <p className="mt-1 text-sm text-ink/60">{selectedGroup.name}</p>
 
-              {selectedGroup.ownerId === user.id ? (
-                <form onSubmit={submitParticipant} className="mt-5" noValidate>
-                  <label className="block text-sm font-medium">
-                    Participant email
-                    <input
-                      className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
-                      type="email"
-                      value={participantEmail}
-                      onChange={(event) => setParticipantEmail(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <button className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-leaf px-4 py-2.5 font-semibold text-white hover:bg-leaf/90 focus:outline-none focus:ring-2 focus:ring-leaf/30">
-                    Add Participant
-                  </button>
-                </form>
-              ) : null}
-
-              {participantError ? (
-                <p className="mt-4 rounded-md border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">
-                  {participantError}
-                </p>
-              ) : null}
-
-              <div className="mt-5 space-y-2">
-                {participantsLoading ? <p className="text-sm text-ink/60">Loading Participants...</p> : null}
-                {!participantsLoading && participants.length === 0 ? (
-                  <p className="text-sm text-ink/60">No Participants yet.</p>
+                {selectedGroup.ownerId === user.id ? (
+                  <form onSubmit={submitParticipant} className="mt-5" noValidate>
+                    <label className="block text-sm font-medium">
+                      Participant email
+                      <input
+                        className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
+                        type="email"
+                        value={participantEmail}
+                        onChange={(event) => setParticipantEmail(event.target.value)}
+                        required
+                      />
+                    </label>
+                    <button className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-leaf px-4 py-2.5 font-semibold text-white hover:bg-leaf/90 focus:outline-none focus:ring-2 focus:ring-leaf/30">
+                      Add Participant
+                    </button>
+                  </form>
                 ) : null}
-                {participants.map((participant) => (
-                  <div
-                    key={participant.id}
-                    className="flex items-center justify-between gap-3 rounded-md border border-ink/10 px-3 py-2 text-sm"
-                  >
-                    <span className="font-medium">{participant.user.email}</span>
-                    <span className="rounded-md bg-mist px-2 py-1 capitalize text-ink/70">{participant.role}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+
+                {participantError ? (
+                  <p className="mt-4 rounded-md border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">
+                    {participantError}
+                  </p>
+                ) : null}
+
+                <div className="mt-5 space-y-2">
+                  {participantsLoading ? <p className="text-sm text-ink/60">Loading Participants...</p> : null}
+                  {!participantsLoading && participants.length === 0 ? (
+                    <p className="text-sm text-ink/60">No Participants yet.</p>
+                  ) : null}
+                  {participants.map((participant) => (
+                    <div
+                      key={participant.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-ink/10 px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium">{participant.user.email}</span>
+                      <span className="rounded-md bg-mist px-2 py-1 capitalize text-ink/70">{participant.role}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="expenses-heading">
+                <div className="flex items-center gap-2">
+                  <CircleDollarSign aria-hidden className="text-leaf" size={20} />
+                  <h2 id="expenses-heading" className="text-xl font-semibold">
+                    Expenses
+                  </h2>
+                </div>
+                <p className="mt-1 text-sm text-ink/60">{selectedGroup.name}</p>
+
+                {participants.length > 0 ? (
+                  <form onSubmit={submitExpense} className="mt-5 space-y-4" noValidate>
+                    <label className="block text-sm font-medium">
+                      Expense description
+                      <input
+                        className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
+                        value={expenseDescription}
+                        onChange={(event) => setExpenseDescription(event.target.value)}
+                        required
+                      />
+                    </label>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label className="block text-sm font-medium">
+                        Amount
+                        <input
+                          className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
+                          inputMode="decimal"
+                          value={expenseAmount}
+                          onChange={(event) => setExpenseAmount(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Date
+                        <input
+                          className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
+                          type="date"
+                          value={expenseDate}
+                          onChange={(event) => setExpenseDate(event.target.value)}
+                          required
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block text-sm font-medium">
+                      Payer
+                      <select
+                        className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20"
+                        value={payerParticipantId}
+                        onChange={(event) => setPayerParticipantId(event.target.value)}
+                        required
+                      >
+                        {participants.map((participant) => (
+                          <option key={participant.id} value={participant.id}>
+                            {participant.user.email}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <fieldset className="space-y-2">
+                      <legend className="text-sm font-medium">Equal Split</legend>
+                      {participants.map((participant) => (
+                        <label key={participant.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            className="h-4 w-4 rounded border-ink/30 text-leaf focus:ring-leaf/30"
+                            type="checkbox"
+                            checked={expenseParticipantIds.includes(participant.id)}
+                            onChange={() => toggleExpenseParticipant(participant.id)}
+                          />
+                          <span>Split with {participant.user.email}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+
+                    {expenseError ? (
+                      <p className="rounded-md border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">
+                        {expenseError}
+                      </p>
+                    ) : null}
+
+                    <button className="inline-flex w-full items-center justify-center rounded-md bg-leaf px-4 py-2.5 font-semibold text-white hover:bg-leaf/90 focus:outline-none focus:ring-2 focus:ring-leaf/30">
+                      Add Expense
+                    </button>
+                  </form>
+                ) : null}
+
+                <div className="mt-5 space-y-3">
+                  {expensesLoading ? <p className="text-sm text-ink/60">Loading Expenses...</p> : null}
+                  {!expensesLoading && expenses.length === 0 ? <p className="text-sm text-ink/60">No Expenses yet.</p> : null}
+                  {expenses.map((expense) => (
+                    <article key={expense.id} className="rounded-md border border-ink/10 p-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">{expense.description}</h3>
+                          <p className="mt-1 text-ink/60">
+                            {expense.payer.user.email} paid {formatMoney(expense.amountMinor, expense.currency)}
+                          </p>
+                        </div>
+                        <span className="rounded-md bg-mist px-2 py-1 text-ink/70">{expense.expenseDate}</span>
+                      </div>
+                      <ul className="mt-3 space-y-1 text-ink/70">
+                        {expense.splits.map((split) => (
+                          <li key={split.id}>
+                            {split.participant.user.email}: {formatMoney(split.amountMinor, expense.currency)}
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </>
           ) : null}
         </div>
 
@@ -342,4 +519,22 @@ function Metric({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 font-semibold">{value}</dd>
     </div>
   );
+}
+
+function parseMoneyMinor(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return null;
+  }
+
+  const [whole, cents = ""] = trimmed.split(".");
+  return Number(whole) * 100 + Number(cents.padEnd(2, "0"));
+}
+
+function formatMoney(amountMinor: number, currency: string) {
+  const sign = amountMinor < 0 ? "-" : "";
+  const absolute = Math.abs(amountMinor);
+  const whole = Math.floor(absolute / 100);
+  const cents = String(absolute % 100).padStart(2, "0");
+  return `${sign}${currency} ${whole}.${cents}`;
 }

@@ -10,6 +10,8 @@ vi.mock("./api", () => ({
   createGroup: vi.fn(),
   listParticipants: vi.fn(),
   addParticipant: vi.fn(),
+  listExpenses: vi.fn(),
+  createExpense: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   register: vi.fn(),
@@ -20,6 +22,7 @@ describe("App", () => {
     vi.mocked(api.getMe).mockRejectedValue(new Error("not signed in"));
     vi.mocked(api.listGroups).mockResolvedValue({ groups: [] });
     vi.mocked(api.listParticipants).mockResolvedValue({ participants: [] });
+    vi.mocked(api.listExpenses).mockResolvedValue({ expenses: [] });
     vi.mocked(api.addParticipant).mockResolvedValue({
       participant: {
         id: "participant-2",
@@ -29,6 +32,7 @@ describe("App", () => {
       },
     });
     vi.mocked(api.createGroup).mockReset();
+    vi.mocked(api.createExpense).mockReset();
     vi.mocked(api.login).mockReset();
     vi.mocked(api.logout).mockReset();
     vi.mocked(api.register).mockReset();
@@ -87,7 +91,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Participant" }));
 
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith("group-1", "friend@example.com"));
-    expect(await screen.findByText("friend@example.com")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("friend@example.com").length).toBeGreaterThan(0));
   });
 
   it("shows Participant add errors", async () => {
@@ -118,5 +122,112 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Participant" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("No registered User has that email.");
+  });
+
+  it("creates an equal Split Expense from a Group detail view", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({
+      groups: [
+        {
+          id: "group-1",
+          name: "Bangkok Food Crawl",
+          defaultCurrency: "THB",
+          description: "Dinner",
+          ownerId: "owner-1",
+        },
+      ],
+    });
+    vi.mocked(api.listParticipants).mockResolvedValue({
+      participants: [
+        {
+          id: "participant-1",
+          user: { id: "owner-1", email: "owner@example.com" },
+          role: "owner",
+          active: true,
+        },
+        {
+          id: "participant-2",
+          user: { id: "user-2", email: "friend@example.com" },
+          role: "participant",
+          active: true,
+        },
+      ],
+    });
+    vi.mocked(api.createExpense).mockResolvedValue({
+      expense: {
+        id: "expense-1",
+        description: "Noodles",
+        amountMinor: 10001,
+        currency: "THB",
+        expenseDate: "2026-08-14",
+        splitType: "equal",
+        payerParticipantId: "participant-1",
+        payer: {
+          id: "participant-1",
+          user: { id: "owner-1", email: "owner@example.com" },
+          role: "owner",
+          active: true,
+        },
+        splits: [
+          {
+            id: "split-1",
+            participantId: "participant-1",
+            participant: {
+              id: "participant-1",
+              user: { id: "owner-1", email: "owner@example.com" },
+              role: "owner",
+              active: true,
+            },
+            amountMinor: 5001,
+          },
+          {
+            id: "split-2",
+            participantId: "participant-2",
+            participant: {
+              id: "participant-2",
+              user: { id: "user-2", email: "friend@example.com" },
+              role: "participant",
+              active: true,
+            },
+            amountMinor: 5000,
+          },
+        ],
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+    fireEvent.change(await screen.findByLabelText("Expense description"), {
+      target: { value: "Noodles" },
+    });
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "100.01" },
+    });
+    fireEvent.change(screen.getByLabelText("Date"), {
+      target: { value: "2026-08-14" },
+    });
+    fireEvent.change(screen.getByLabelText("Payer"), {
+      target: { value: "participant-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Expense" }));
+
+    await waitFor(() =>
+      expect(api.createExpense).toHaveBeenCalledWith("group-1", {
+        description: "Noodles",
+        amountMinor: 10001,
+        currency: "THB",
+        expenseDate: "2026-08-14",
+        payerParticipantId: "participant-1",
+        participantIds: ["participant-1", "participant-2"],
+      }),
+    );
+    expect(await screen.findByText("Noodles")).toBeInTheDocument();
+    expect(screen.getByText("owner@example.com: THB 50.01")).toBeInTheDocument();
+    expect(screen.getByText("friend@example.com: THB 50.00")).toBeInTheDocument();
   });
 });

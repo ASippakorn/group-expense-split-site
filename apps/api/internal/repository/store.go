@@ -105,6 +105,18 @@ func (s *Store) FindParticipant(ctx context.Context, groupID, userID uuid.UUID) 
 	return &participant, err
 }
 
+func (s *Store) FindParticipantByID(ctx context.Context, groupID, participantID uuid.UUID) (*domain.Participant, error) {
+	var participant domain.Participant
+	err := s.db.WithContext(ctx).
+		Preload("User").
+		Where("group_id = ? AND id = ?", groupID, participantID).
+		First(&participant).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &participant, err
+}
+
 func (s *Store) CreateParticipant(ctx context.Context, participant *domain.Participant) error {
 	return s.db.WithContext(ctx).Omit("User").Create(participant).Error
 }
@@ -117,4 +129,46 @@ func (s *Store) ListParticipantsForGroup(ctx context.Context, groupID uuid.UUID)
 		Order("created_at ASC").
 		Find(&participants).Error
 	return participants, err
+}
+
+func (s *Store) CreateExpenseWithSplits(ctx context.Context, expense *domain.Expense) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		record := &domain.Expense{
+			GroupID:            expense.GroupID,
+			PayerParticipantID: expense.PayerParticipantID,
+			Description:        expense.Description,
+			AmountMinor:        expense.AmountMinor,
+			Currency:           expense.Currency,
+			ExpenseDate:        expense.ExpenseDate,
+			SplitType:          expense.SplitType,
+		}
+		if err := tx.Create(record).Error; err != nil {
+			return err
+		}
+
+		expense.ID = record.ID
+		for index := range expense.Splits {
+			expense.Splits[index].ExpenseID = record.ID
+		}
+		if len(expense.Splits) > 0 {
+			if err := tx.Omit("Participant").Create(&expense.Splits).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error) {
+	var expenses []domain.Expense
+	err := s.db.WithContext(ctx).
+		Preload("PayerParticipant.User").
+		Preload("Splits", func(db *gorm.DB) *gorm.DB {
+			return db.Order("expense_splits.participant_id ASC")
+		}).
+		Preload("Splits.Participant.User").
+		Where("group_id = ?", groupID).
+		Order("expense_date DESC, created_at DESC").
+		Find(&expenses).Error
+	return expenses, err
 }
