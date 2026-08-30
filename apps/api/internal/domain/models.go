@@ -151,6 +151,30 @@ type ExpenseSplit struct {
 	CreatedAt             time.Time
 }
 
+type Settlement struct {
+	ID                    uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID               uuid.UUID `gorm:"type:uuid;not null;index"`
+	PayerParticipantID    uuid.UUID `gorm:"type:uuid;not null;index"`
+	PayerParticipant      Participant
+	ReceiverParticipantID uuid.UUID `gorm:"type:uuid;not null;index"`
+	ReceiverParticipant   Participant
+	AmountMinor           int64     `gorm:"not null"`
+	Currency              string    `gorm:"type:char(3);not null"`
+	SettlementDate        time.Time `gorm:"not null"`
+	Note                  string    `gorm:"not null;default:''"`
+	CreatedAt             time.Time
+}
+
+func (s *Settlement) BeforeCreate(_ *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
+	}
+	if s.Currency == "" {
+		s.Currency = DefaultCurrency
+	}
+	return nil
+}
+
 func (s *ExpenseSplit) BeforeCreate(_ *gorm.DB) error {
 	if s.ID == uuid.Nil {
 		s.ID = uuid.New()

@@ -20,6 +20,9 @@ type GroupRepository interface {
 	ListParticipantsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Participant, error)
 	CreateExpenseWithSplits(ctx context.Context, expense *domain.Expense) error
 	ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error)
+	CreateSettlement(ctx context.Context, settlement *domain.Settlement) error
+	ListSettlementsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Settlement, error)
+	DeleteSettlement(ctx context.Context, groupID, settlementID uuid.UUID) error
 	CreateTag(ctx context.Context, tag *domain.Tag) error
 	ListTagsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Tag, error)
 	FindTagByID(ctx context.Context, groupID, tagID uuid.UUID) (*domain.Tag, error)

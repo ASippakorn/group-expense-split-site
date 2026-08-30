@@ -382,3 +382,54 @@ func TestGroupServiceListBalancesAccumulatesMultipleExpensesWithUnevenSplits(t *
 		{ParticipantID: friendTwoParticipantID, Participant: *store.participants[participantKey(groupID, friendTwoID)], PaidAmountMinor: 0, OwedAmountMinor: 6333, AmountMinor: -6333},
 	}, balances)
 }
+
+func TestGroupServiceRecordsAndDeletesSettlementThatUpdatesBalances(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID, friendID := uuid.New(), uuid.New(), uuid.New()
+	ownerParticipantID, friendParticipantID := uuid.New(), uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{ID: friendParticipantID, GroupID: groupID, UserID: friendID, Active: true}
+	store.expenses = []domain.Expense{{GroupID: groupID, PayerParticipantID: ownerParticipantID, AmountMinor: 10000, Splits: []domain.ExpenseSplit{{ParticipantID: ownerParticipantID, AmountMinor: 5000}, {ParticipantID: friendParticipantID, AmountMinor: 5000}}}}
+	service := NewGroupService(store)
+
+	settlement, err := service.CreateSettlement(ctx, groupID, friendID, CreateSettlementInput{PayerParticipantID: friendParticipantID, ReceiverParticipantID: ownerParticipantID, AmountMinor: 7500, Currency: "thb", SettlementDate: "2026-08-30", Note: "Paid back"})
+	require.NoError(t, err)
+	require.Equal(t, int64(7500), settlement.AmountMinor)
+	require.Equal(t, domain.DefaultCurrency, settlement.Currency)
+
+	balances, err := service.ListBalances(ctx, groupID, ownerID)
+	require.NoError(t, err)
+	require.Equal(t, int64(-2500), balanceForParticipant(balances, ownerParticipantID).AmountMinor)
+	require.Equal(t, int64(2500), balanceForParticipant(balances, friendParticipantID).AmountMinor)
+
+	require.NoError(t, service.DeleteSettlement(ctx, groupID, ownerID, settlement.ID))
+	balances, err = service.ListBalances(ctx, groupID, ownerID)
+	require.NoError(t, err)
+	require.Equal(t, int64(5000), balanceForParticipant(balances, ownerParticipantID).AmountMinor)
+	require.Equal(t, int64(-5000), balanceForParticipant(balances, friendParticipantID).AmountMinor)
+}
+
+func balanceForParticipant(balances []Balance, participantID uuid.UUID) Balance {
+	for _, balance := range balances {
+		if balance.ParticipantID == participantID {
+			return balance
+		}
+	}
+	return Balance{}
+}
+
+func TestGroupServiceAllowsOnlyRepaymentSidesToRecordSettlements(t *testing.T) {
+	ctx := context.Background()
+	groupID, payerUserID, receiverUserID, outsiderID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	payerID, receiverID := uuid.New(), uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, payerUserID)] = &domain.Participant{ID: payerID, GroupID: groupID, UserID: payerUserID, Active: true}
+	store.participants[participantKey(groupID, receiverUserID)] = &domain.Participant{ID: receiverID, GroupID: groupID, UserID: receiverUserID, Active: true}
+	store.participants[participantKey(groupID, outsiderID)] = &domain.Participant{ID: uuid.New(), GroupID: groupID, UserID: outsiderID, Active: true}
+	service := NewGroupService(store)
+	_, err := service.CreateSettlement(ctx, groupID, outsiderID, CreateSettlementInput{PayerParticipantID: payerID, ReceiverParticipantID: receiverID, AmountMinor: 100, Currency: "THB", SettlementDate: "2026-08-30"})
+	require.ErrorIs(t, err, ErrForbidden)
+	_, err = service.CreateSettlement(ctx, groupID, receiverUserID, CreateSettlementInput{PayerParticipantID: payerID, ReceiverParticipantID: receiverID, AmountMinor: 100, Currency: "THB", SettlementDate: "2026-08-30"})
+	require.NoError(t, err)
+}

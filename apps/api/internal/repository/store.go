@@ -201,3 +201,24 @@ func (s *Store) ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]
 		Find(&expenses).Error
 	return expenses, err
 }
+
+func (s *Store) CreateSettlement(ctx context.Context, settlement *domain.Settlement) error {
+	return s.db.WithContext(ctx).Omit("PayerParticipant", "ReceiverParticipant").Create(settlement).Error
+}
+
+func (s *Store) ListSettlementsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Settlement, error) {
+	var settlements []domain.Settlement
+	err := s.db.WithContext(ctx).Preload("PayerParticipant.User").Preload("ReceiverParticipant.User").Where("group_id = ?", groupID).Order("settlement_date DESC, created_at DESC").Find(&settlements).Error
+	return settlements, err
+}
+
+func (s *Store) DeleteSettlement(ctx context.Context, groupID, settlementID uuid.UUID) error {
+	result := s.db.WithContext(ctx).Delete(&domain.Settlement{}, "id = ? AND group_id = ?", settlementID, groupID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

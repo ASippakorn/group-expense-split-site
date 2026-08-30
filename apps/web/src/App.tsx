@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Balance, Expense, Group, Participant, Tag, User } from "./api";
+import type { Balance, Expense, Group, Participant, Settlement, Tag, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -127,6 +127,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [groupBalances, setGroupBalances] = useState<Record<string, Balance[]>>({});
   const [unavailableGroupBalances, setUnavailableGroupBalances] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
@@ -142,6 +143,12 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [tagId, setTagId] = useState("");
   const [tagName, setTagName] = useState("");
   const [tagParticipantIds, setTagParticipantIds] = useState<string[]>([]);
+  const [settlementPayerId, setSettlementPayerId] = useState("");
+  const [settlementReceiverId, setSettlementReceiverId] = useState("");
+  const [settlementAmount, setSettlementAmount] = useState("");
+  const [settlementDate, setSettlementDate] = useState("");
+  const [settlementNote, setSettlementNote] = useState("");
+  const [settlementError, setSettlementError] = useState("");
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
   const [expenseError, setExpenseError] = useState("");
@@ -204,16 +211,18 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     setExpensesLoading(true);
     setBalancesLoading(true);
     try {
-      const [{ participants }, { expenses }, { balances }, { tags }] = await Promise.all([
+      const [{ participants }, { expenses }, { balances }, { tags }, { settlements }] = await Promise.all([
         api.listParticipants(group.id),
         api.listExpenses(group.id),
         api.listBalances(group.id),
         api.listTags(group.id),
+        api.listSettlements(group.id),
       ]);
       setParticipants(participants);
       setExpenses(expenses);
       setBalances(balances);
       setTags(tags);
+      setSettlements(settlements);
       setGroupBalances((current) => ({ ...current, [group.id]: balances }));
       setUnavailableGroupBalances((current) => {
         const next = new Set(current);
@@ -226,6 +235,8 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       setSplitType("equal");
       setTagId("");
       setTagParticipantIds(participants.map((participant) => participant.id));
+      setSettlementPayerId(participants[1]?.id ?? "");
+      setSettlementReceiverId(participants[0]?.id ?? "");
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to load Group details.");
     } finally {
@@ -266,6 +277,25 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       setBalanceError("Unable to refresh Balances.");
       setUnavailableGroupBalances((current) => new Set(current).add(groupID));
     }
+  }
+
+  async function submitSettlement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedGroup) return;
+    const amountMinor = parseMoneyMinor(settlementAmount);
+    if (amountMinor === null || amountMinor <= 0 || !settlementDate || !settlementPayerId || !settlementReceiverId || settlementPayerId === settlementReceiverId) {
+      setSettlementError("Enter a positive amount, date, and two different Participants."); return;
+    }
+    try {
+      const { settlement } = await api.createSettlement(selectedGroup.id, { payerParticipantId: settlementPayerId, receiverParticipantId: settlementReceiverId, amountMinor, currency: selectedGroup.defaultCurrency, settlementDate, note: settlementNote });
+      setSettlements((current) => [settlement, ...current]); setSettlementAmount(""); setSettlementNote(""); setSettlementError(""); await refreshBalances(selectedGroup.id);
+    } catch (err) { setSettlementError(err instanceof Error ? err.message : "Unable to record Settlement."); }
+  }
+
+  async function removeSettlement(settlementID: string) {
+    if (!selectedGroup) return;
+    try { await api.deleteSettlement(selectedGroup.id, settlementID); setSettlements((current) => current.filter((settlement) => settlement.id !== settlementID)); await refreshBalances(selectedGroup.id); }
+    catch (err) { setSettlementError(err instanceof Error ? err.message : "Unable to delete Settlement."); }
   }
 
   async function submitParticipant(event: FormEvent<HTMLFormElement>) {
@@ -639,6 +669,22 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                     </article>
                   ))}
                 </div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="settlements-heading">
+                <h2 id="settlements-heading" className="text-xl font-semibold">Settlements</h2>
+                <form onSubmit={submitSettlement} className="mt-4 space-y-3" noValidate>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium">Settlement payer<select aria-label="Settlement payer" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementPayerId} onChange={(event) => setSettlementPayerId(event.target.value)}>{participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.user.email}</option>)}</select></label>
+                    <label className="text-sm font-medium">Settlement receiver<select aria-label="Settlement receiver" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementReceiverId} onChange={(event) => setSettlementReceiverId(event.target.value)}>{participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.user.email}</option>)}</select></label>
+                    <label className="text-sm font-medium">Settlement amount<input aria-label="Settlement amount" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" inputMode="decimal" value={settlementAmount} onChange={(event) => setSettlementAmount(event.target.value)} /></label>
+                    <label className="text-sm font-medium">Settlement date<input aria-label="Settlement date" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" type="date" value={settlementDate} onChange={(event) => setSettlementDate(event.target.value)} /></label>
+                  </div>
+                  <label className="block text-sm font-medium">Note<input aria-label="Settlement note" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementNote} onChange={(event) => setSettlementNote(event.target.value)} /></label>
+                  {settlementError ? <p className="text-sm text-coral" role="alert">{settlementError}</p> : null}
+                  <button className="rounded-md bg-leaf px-3 py-2 text-sm font-semibold text-white">Record Settlement</button>
+                </form>
+                <div className="mt-4 space-y-2">{settlements.length === 0 ? <p className="text-sm text-ink/60">No Settlements yet.</p> : settlements.map((settlement) => <article key={settlement.id} className="flex items-center justify-between gap-3 rounded-md border border-ink/10 p-3 text-sm"><p>{settlement.payer.user.email} repaid {settlement.receiver.user.email} {formatMoney(settlement.amountMinor, settlement.currency)}{settlement.note ? ` · ${settlement.note}` : ""}</p><button className="text-coral underline" onClick={() => void removeSettlement(settlement.id)}>Delete</button></article>)}</div>
               </section>
 
               <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="balances-heading">

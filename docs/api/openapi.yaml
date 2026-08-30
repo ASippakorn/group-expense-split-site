@@ -319,6 +319,36 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/settlements:
+    get:
+      summary: List Settlements for a Group
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      responses:
+        "200":
+          description: Settlements visible to the current User
+          content: {application/json: {schema: {type: object, required: [settlements], properties: {settlements: {type: array, items: {$ref: "#/components/schemas/Settlement"}}}}}}
+        "401": {$ref: "#/components/responses/Unauthenticated"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      summary: Record a Settlement
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/CreateSettlement"}}}
+      responses:
+        "201": {description: Settlement recorded, content: {application/json: {schema: {type: object, required: [settlement], properties: {settlement: {$ref: "#/components/schemas/Settlement"}}}}}}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /groups/{groupId}/settlements/{settlementId}:
+    delete:
+      summary: Delete a Settlement
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}, {name: settlementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        "204": {description: Settlement deleted}
+        "403": {$ref: "#/components/responses/Forbidden"}
 components:
   parameters:
     GroupId:
@@ -596,6 +626,27 @@ components:
           format: int64
           description: Positive when the Participant is owed money and negative when they owe money.
           example: 5000
+    CreateSettlement:
+      required: [payerParticipantId, receiverParticipantId, amountMinor, currency, settlementDate]
+      properties:
+        payerParticipantId: {type: string, format: uuid}
+        receiverParticipantId: {type: string, format: uuid}
+        amountMinor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        settlementDate: {type: string, format: date}
+        note: {type: string}
+    Settlement:
+      required: [id, payerParticipantId, payer, receiverParticipantId, receiver, amountMinor, currency, settlementDate, note]
+      properties:
+        id: {type: string, format: uuid}
+        payerParticipantId: {type: string, format: uuid}
+        payer: {$ref: "#/components/schemas/Participant"}
+        receiverParticipantId: {type: string, format: uuid}
+        receiver: {$ref: "#/components/schemas/Participant"}
+        amountMinor: {type: integer, format: int64}
+        currency: {type: string}
+        settlementDate: {type: string, format: date}
+        note: {type: string}
     ErrorEnvelope:
       type: object
       required: [error]

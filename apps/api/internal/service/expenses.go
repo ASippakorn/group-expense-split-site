@@ -47,6 +47,53 @@ type Balance struct {
 	AmountMinor     int64
 }
 
+type CreateSettlementInput struct {
+	PayerParticipantID    uuid.UUID
+	ReceiverParticipantID uuid.UUID
+	AmountMinor           int64
+	Currency              string
+	SettlementDate        string
+	Note                  string
+}
+
+func (s *GroupService) CreateSettlement(ctx context.Context, groupID, actorID uuid.UUID, input CreateSettlementInput) (*domain.Settlement, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	payer, payerErr := s.store.FindParticipantByID(ctx, groupID, input.PayerParticipantID)
+	receiver, receiverErr := s.store.FindParticipantByID(ctx, groupID, input.ReceiverParticipantID)
+	date, dateErr := parseLedgerDate(input.SettlementDate)
+	currency := strings.ToUpper(strings.TrimSpace(input.Currency))
+	if currency == "" {
+		currency = domain.DefaultCurrency
+	}
+	if payerErr != nil || receiverErr != nil || !payer.Active || !receiver.Active || input.PayerParticipantID == input.ReceiverParticipantID || input.AmountMinor <= 0 || len(currency) != 3 || dateErr != nil {
+		return nil, ErrValidation
+	}
+	if actorID != payer.UserID && actorID != receiver.UserID {
+		return nil, ErrForbidden
+	}
+	settlement := &domain.Settlement{GroupID: groupID, PayerParticipantID: payer.ID, PayerParticipant: *payer, ReceiverParticipantID: receiver.ID, ReceiverParticipant: *receiver, AmountMinor: input.AmountMinor, Currency: currency, SettlementDate: date, Note: strings.TrimSpace(input.Note)}
+	if err := s.store.CreateSettlement(ctx, settlement); err != nil {
+		return nil, err
+	}
+	return settlement, nil
+}
+
+func (s *GroupService) ListSettlements(ctx context.Context, groupID, actorID uuid.UUID) ([]domain.Settlement, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	return s.store.ListSettlementsForGroup(ctx, groupID)
+}
+
+func (s *GroupService) DeleteSettlement(ctx context.Context, groupID, actorID, settlementID uuid.UUID) error {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return err
+	}
+	return s.store.DeleteSettlement(ctx, groupID, settlementID)
+}
+
 func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateEqualExpenseInput) (*domain.Expense, error) {
 	return s.CreateExpense(ctx, groupID, actorID, CreateExpenseInput{
 		Description: input.Description, AmountMinor: input.AmountMinor, Currency: input.Currency, ExpenseDate: input.ExpenseDate,
@@ -61,7 +108,7 @@ func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.
 
 	description := strings.TrimSpace(input.Description)
 	currency := strings.ToUpper(strings.TrimSpace(input.Currency))
-	expenseDate, err := parseExpenseDate(input.ExpenseDate)
+	expenseDate, err := parseLedgerDate(input.ExpenseDate)
 	if currency == "" {
 		currency = domain.DefaultCurrency
 	}
@@ -249,10 +296,22 @@ func (s *GroupService) ListBalances(ctx context.Context, groupID, actorID uuid.U
 	if err != nil {
 		return nil, err
 	}
+	settlements, err := s.store.ListSettlementsForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
 
 	balancesByParticipantID := make(map[uuid.UUID]Balance, len(participants))
 	for _, participant := range participants {
 		balancesByParticipantID[participant.ID] = Balance{ParticipantID: participant.ID, Participant: participant}
+	}
+	for _, settlement := range settlements {
+		payer := balancesByParticipantID[settlement.PayerParticipantID]
+		payer.PaidAmountMinor += settlement.AmountMinor
+		balancesByParticipantID[settlement.PayerParticipantID] = payer
+		receiver := balancesByParticipantID[settlement.ReceiverParticipantID]
+		receiver.OwedAmountMinor += settlement.AmountMinor
+		balancesByParticipantID[settlement.ReceiverParticipantID] = receiver
 	}
 	for _, expense := range expenses {
 		balance := balancesByParticipantID[expense.PayerParticipantID]
@@ -294,7 +353,7 @@ func (s *GroupService) requireActiveParticipant(ctx context.Context, groupID, us
 	return actor, nil
 }
 
-func parseExpenseDate(value string) (time.Time, error) {
+func parseLedgerDate(value string) (time.Time, error) {
 	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
 	if err != nil {
 		return time.Time{}, err

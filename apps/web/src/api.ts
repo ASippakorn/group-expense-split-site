@@ -51,6 +51,7 @@ export type Balance = {
   owedAmountMinor: number;
   amountMinor: number;
 };
+export type Settlement = { id: string; payerParticipantId: string; payer: Participant; receiverParticipantId: string; receiver: Participant; amountMinor: number; currency: string; settlementDate: string; note: string };
 
 type ApiError = {
   error: {
@@ -141,6 +142,9 @@ export function listExpenses(groupId: string) {
 export function listBalances(groupId: string) {
   return request<{ balances: Balance[] }>(`/groups/${groupId}/balances`);
 }
+export function listSettlements(groupId: string) { return request<{ settlements: Settlement[] }>(`/groups/${groupId}/settlements`); }
+export function createSettlement(groupId: string, input: { payerParticipantId: string; receiverParticipantId: string; amountMinor: number; currency: string; settlementDate: string; note: string }) { return request<{ settlement: Settlement }>(`/groups/${groupId}/settlements`, { method: "POST", body: JSON.stringify(input) }); }
+export function deleteSettlement(groupId: string, settlementId: string) { return request<void>(`/groups/${groupId}/settlements/${settlementId}`, { method: "DELETE" }); }
 
 export function listTags(groupId: string) {
   return request<{ tags: Tag[] }>(`/groups/${groupId}/tags`);

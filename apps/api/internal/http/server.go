@@ -44,6 +44,9 @@ func NewServer(cfg config.Config, auth *service.AuthService, groups *service.Gro
 	api.Get("/groups/:groupID/balances", server.requireUser, server.listBalances)
 	api.Get("/groups/:groupID/expenses", server.requireUser, server.listExpenses)
 	api.Post("/groups/:groupID/expenses", server.requireUser, server.createExpense)
+	api.Get("/groups/:groupID/settlements", server.requireUser, server.listSettlements)
+	api.Post("/groups/:groupID/settlements", server.requireUser, server.createSettlement)
+	api.Delete("/groups/:groupID/settlements/:settlementID", server.requireUser, server.deleteSettlement)
 
 	return app
 }

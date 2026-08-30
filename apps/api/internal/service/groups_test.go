@@ -123,6 +123,7 @@ type fakeGroupStore struct {
 	usersByEmail map[string]*domain.User
 	participants map[string]*domain.Participant
 	expenses     []domain.Expense
+	settlements  []domain.Settlement
 	tags         map[uuid.UUID]*domain.Tag
 }
 
@@ -243,4 +244,30 @@ func (s *fakeGroupStore) ListExpensesForGroup(_ context.Context, groupID uuid.UU
 		}
 	}
 	return expenses, nil
+}
+
+func (s *fakeGroupStore) CreateSettlement(_ context.Context, settlement *domain.Settlement) error {
+	settlement.ID = uuid.New()
+	s.settlements = append(s.settlements, *settlement)
+	return nil
+}
+
+func (s *fakeGroupStore) ListSettlementsForGroup(_ context.Context, groupID uuid.UUID) ([]domain.Settlement, error) {
+	settlements := make([]domain.Settlement, 0)
+	for _, settlement := range s.settlements {
+		if settlement.GroupID == groupID {
+			settlements = append(settlements, settlement)
+		}
+	}
+	return settlements, nil
+}
+
+func (s *fakeGroupStore) DeleteSettlement(_ context.Context, groupID, settlementID uuid.UUID) error {
+	for index, settlement := range s.settlements {
+		if settlement.GroupID == groupID && settlement.ID == settlementID {
+			s.settlements = append(s.settlements[:index], s.settlements[index+1:]...)
+			return nil
+		}
+	}
+	return repository.ErrNotFound
 }
