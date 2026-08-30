@@ -1,0 +1,5 @@
+interface:
+  display_name: "Choose Implementation Flow"
+  short_description: "Pick the right flow and model before implementing"
+policy:
+  allow_implicit_invocation: false
