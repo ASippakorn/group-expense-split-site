@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Balance, Expense, Group, Participant, Settlement, Tag, User } from "./api";
+import type { Balance, Expense, Group, Participant, Settlement, SuggestedTransfer, Tag, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -126,6 +126,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
+  const [suggestedTransfers, setSuggestedTransfers] = useState<SuggestedTransfer[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [groupBalances, setGroupBalances] = useState<Record<string, Balance[]>>({});
@@ -211,16 +212,18 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     setExpensesLoading(true);
     setBalancesLoading(true);
     try {
-      const [{ participants }, { expenses }, { balances }, { tags }, { settlements }] = await Promise.all([
+      const [{ participants }, { expenses }, { balances }, { suggestedTransfers }, { tags }, { settlements }] = await Promise.all([
         api.listParticipants(group.id),
         api.listExpenses(group.id),
         api.listBalances(group.id),
+        api.listSuggestedTransfers(group.id),
         api.listTags(group.id),
         api.listSettlements(group.id),
       ]);
       setParticipants(participants);
       setExpenses(expenses);
       setBalances(balances);
+      setSuggestedTransfers(suggestedTransfers);
       setTags(tags);
       setSettlements(settlements);
       setGroupBalances((current) => ({ ...current, [group.id]: balances }));
@@ -264,8 +267,12 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
 
   async function refreshBalances(groupID: string) {
     try {
-      const { balances } = await api.listBalances(groupID);
+      const [{ balances }, { suggestedTransfers }] = await Promise.all([
+        api.listBalances(groupID),
+        api.listSuggestedTransfers(groupID),
+      ]);
       setBalances(balances);
+      setSuggestedTransfers(suggestedTransfers);
       setBalanceError("");
       setGroupBalances((current) => ({ ...current, [groupID]: balances }));
       setUnavailableGroupBalances((current) => {
@@ -711,6 +718,18 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                         Paid {formatMoney(balance.paidAmountMinor, selectedGroup.defaultCurrency)} · Owed {formatMoney(balance.owedAmountMinor, selectedGroup.defaultCurrency)}
                       </p>
                     </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="suggested-transfers-heading">
+                <h2 id="suggested-transfers-heading" className="text-xl font-semibold">Suggested Transfers</h2>
+                <p className="mt-1 text-sm text-ink/60">A deterministic, minimum-transfer way to settle the current Balances.</p>
+                <div className="mt-5 space-y-2">
+                  {suggestedTransfers.length === 0 ? <p className="text-sm text-ink/60">Everyone is settled up.</p> : suggestedTransfers.map((transfer, index) => (
+                    <p key={`${transfer.payerParticipantId}-${transfer.receiverParticipantId}-${index}`} className="rounded-md border border-ink/10 px-3 py-2 text-sm">
+                      {transfer.payer.user.email} pays {transfer.receiver.user.email} {formatMoney(transfer.amountMinor, selectedGroup.defaultCurrency)}
+                    </p>
                   ))}
                 </div>
               </section>

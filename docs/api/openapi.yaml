@@ -341,6 +341,25 @@ paths:
         "201": {description: Settlement recorded, content: {application/json: {schema: {type: object, required: [settlement], properties: {settlement: {$ref: "#/components/schemas/Settlement"}}}}}}
         "400": {$ref: "#/components/responses/ValidationError"}
         "403": {$ref: "#/components/responses/Forbidden"}
+  /groups/{groupId}/suggested-transfers:
+    get:
+      summary: List deterministic Suggested Transfers for a Group
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      responses:
+        "200":
+          description: Suggested Transfers visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestedTransfers]
+                properties:
+                  suggestedTransfers:
+                    type: array
+                    items: {$ref: "#/components/schemas/SuggestedTransfer"}
+        "401": {$ref: "#/components/responses/Unauthenticated"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /groups/{groupId}/settlements/{settlementId}:
     delete:
       summary: Delete a Settlement
@@ -626,6 +645,23 @@ components:
           format: int64
           description: Positive when the Participant is owed money and negative when they owe money.
           example: 5000
+    SuggestedTransfer:
+      required: [payerParticipantId, payer, receiverParticipantId, receiver, amountMinor]
+      properties:
+        payerParticipantId:
+          type: string
+          format: uuid
+        payer:
+          $ref: "#/components/schemas/Participant"
+        receiverParticipantId:
+          type: string
+          format: uuid
+        receiver:
+          $ref: "#/components/schemas/Participant"
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 1
     CreateSettlement:
       required: [payerParticipantId, receiverParticipantId, amountMinor, currency, settlementDate]
       properties:

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -10,6 +10,7 @@ vi.mock("./api", () => ({
   createGroup: vi.fn(),
   listParticipants: vi.fn(),
   listBalances: vi.fn(),
+  listSuggestedTransfers: vi.fn(),
   listSettlements: vi.fn(),
   createSettlement: vi.fn(),
   deleteSettlement: vi.fn(),
@@ -29,6 +30,7 @@ describe("App", () => {
     vi.mocked(api.listGroups).mockResolvedValue({ groups: [] });
     vi.mocked(api.listParticipants).mockResolvedValue({ participants: [] });
 	vi.mocked(api.listBalances).mockResolvedValue({ balances: [] });
+    vi.mocked(api.listSuggestedTransfers).mockResolvedValue({ suggestedTransfers: [] });
     vi.mocked(api.listSettlements).mockResolvedValue({ settlements: [] });
     vi.mocked(api.listExpenses).mockResolvedValue({ expenses: [] });
     vi.mocked(api.listTags).mockResolvedValue({ tags: [] });
@@ -291,6 +293,36 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Balances" })).toBeInTheDocument();
     expect(screen.getByText("owner@example.com: You are owed THB 50.00")).toBeInTheDocument();
     expect(screen.getByText("friend@example.com: You owe THB 50.00")).toBeInTheDocument();
+  });
+
+  it("renders Suggested Transfers and the settled-up empty state in Group detail", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({ groups: [{ id: "group-1", name: "Bangkok Food Crawl", defaultCurrency: "THB", description: "Dinner", ownerId: "owner-1" }] });
+    vi.mocked(api.listParticipants).mockResolvedValue({ participants: [
+      { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+    ] });
+    vi.mocked(api.listSuggestedTransfers).mockResolvedValue({ suggestedTransfers: [{
+      payerParticipantId: "participant-2", payer: { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+      receiverParticipantId: "participant-1", receiver: { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true }, amountMinor: 5000,
+    }] });
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+
+    expect(await screen.findByRole("heading", { name: "Suggested Transfers" })).toBeInTheDocument();
+    expect(screen.getByText("friend@example.com pays owner@example.com THB 50.00")).toBeInTheDocument();
+  });
+
+  it("shows the Suggested Transfers empty state when everyone is settled up", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({ groups: [{ id: "group-1", name: "Bangkok Food Crawl", defaultCurrency: "THB", description: "Dinner", ownerId: "owner-1" }] });
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+
+    expect(await screen.findByRole("heading", { name: "Suggested Transfers" })).toBeInTheDocument();
+    expect(within(screen.getByRole("heading", { name: "Suggested Transfers" }).closest("section")!).getByText("Everyone is settled up.")).toBeInTheDocument();
   });
 
   it("records and deletes a Settlement from the Group detail view", async () => {

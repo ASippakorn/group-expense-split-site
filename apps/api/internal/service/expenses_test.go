@@ -410,6 +410,114 @@ func TestGroupServiceRecordsAndDeletesSettlementThatUpdatesBalances(t *testing.T
 	require.Equal(t, int64(-5000), balanceForParticipant(balances, friendParticipantID).AmountMinor)
 }
 
+func TestGroupServiceListsDeterministicSuggestedTransfers(t *testing.T) {
+	ctx := context.Background()
+	groupID, actorID := uuid.New(), uuid.New()
+	creditorTwoUserID, debtorOneUserID, debtorTwoUserID := uuid.New(), uuid.New(), uuid.New()
+	creditorOneID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	creditorTwoID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	debtorOneID := uuid.MustParse("00000000-0000-0000-0000-000000000003")
+	debtorTwoID := uuid.MustParse("00000000-0000-0000-0000-000000000004")
+
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, actorID)] = &domain.Participant{ID: creditorOneID, GroupID: groupID, UserID: actorID, Active: true}
+	store.participants[participantKey(groupID, creditorTwoUserID)] = &domain.Participant{ID: creditorTwoID, GroupID: groupID, UserID: creditorTwoUserID, Active: true}
+	store.participants[participantKey(groupID, debtorOneUserID)] = &domain.Participant{ID: debtorOneID, GroupID: groupID, UserID: debtorOneUserID, Active: true}
+	store.participants[participantKey(groupID, debtorTwoUserID)] = &domain.Participant{ID: debtorTwoID, GroupID: groupID, UserID: debtorTwoUserID, Active: true}
+	store.expenses = []domain.Expense{
+		{GroupID: groupID, PayerParticipantID: creditorOneID, AmountMinor: 7000, Splits: []domain.ExpenseSplit{{ParticipantID: debtorTwoID, AmountMinor: 6000}, {ParticipantID: debtorOneID, AmountMinor: 1000}}},
+		{GroupID: groupID, PayerParticipantID: creditorTwoID, AmountMinor: 3000, Splits: []domain.ExpenseSplit{{ParticipantID: debtorOneID, AmountMinor: 3000}}},
+	}
+
+	transfers, err := NewGroupService(store).ListSuggestedTransfers(ctx, groupID, actorID)
+
+	require.NoError(t, err)
+	actual := make([]struct {
+		payerID    uuid.UUID
+		receiverID uuid.UUID
+		amount     int64
+	}, 0, len(transfers))
+	for _, transfer := range transfers {
+		actual = append(actual, struct {
+			payerID    uuid.UUID
+			receiverID uuid.UUID
+			amount     int64
+		}{transfer.PayerParticipantID, transfer.ReceiverParticipantID, transfer.AmountMinor})
+	}
+	require.Equal(t, []struct {
+		payerID    uuid.UUID
+		receiverID uuid.UUID
+		amount     int64
+	}{
+		{debtorOneID, creditorOneID, 4000},
+		{debtorTwoID, creditorOneID, 3000},
+		{debtorTwoID, creditorTwoID, 3000},
+	}, actual)
+}
+
+func TestSuggestedTransfersFindsTheMinimumNumberOfRepayments(t *testing.T) {
+	participant := func(id string) domain.Participant { return domain.Participant{ID: uuid.MustParse(id)} }
+	transfers := suggestedTransfers([]Balance{
+		{Participant: participant("00000000-0000-0000-0000-000000000001"), AmountMinor: 800},
+		{Participant: participant("00000000-0000-0000-0000-000000000002"), AmountMinor: 600},
+		{Participant: participant("00000000-0000-0000-0000-000000000003"), AmountMinor: 400},
+		{Participant: participant("00000000-0000-0000-0000-000000000004"), AmountMinor: -1000},
+		{Participant: participant("00000000-0000-0000-0000-000000000005"), AmountMinor: -800},
+	})
+
+	require.Equal(t, []SuggestedTransfer{
+		{PayerParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000004"), ReceiverParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000002"), AmountMinor: 600},
+		{PayerParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000004"), ReceiverParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000003"), AmountMinor: 400},
+		{PayerParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000005"), ReceiverParticipantID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), AmountMinor: 800},
+	}, transferIdentity(transfers))
+}
+
+func TestGroupServiceListsSimpleSuggestedTransfer(t *testing.T) {
+	ctx := context.Background()
+	groupID, actorID, debtorUserID := uuid.New(), uuid.New(), uuid.New()
+	creditorID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	debtorID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, actorID)] = &domain.Participant{ID: creditorID, GroupID: groupID, UserID: actorID, Active: true}
+	store.participants[participantKey(groupID, debtorUserID)] = &domain.Participant{ID: debtorID, GroupID: groupID, UserID: debtorUserID, Active: true}
+	store.expenses = []domain.Expense{{GroupID: groupID, PayerParticipantID: creditorID, AmountMinor: 5000, Splits: []domain.ExpenseSplit{{ParticipantID: debtorID, AmountMinor: 5000}}}}
+
+	transfers, err := NewGroupService(store).ListSuggestedTransfers(ctx, groupID, actorID)
+
+	require.NoError(t, err)
+	require.Equal(t, []SuggestedTransfer{{PayerParticipantID: debtorID, ReceiverParticipantID: creditorID, AmountMinor: 5000}}, transferIdentity(transfers))
+}
+
+func TestSuggestedTransfersHandlesZeroBalancesOverpaymentAndTies(t *testing.T) {
+	participant := func(id string) domain.Participant { return domain.Participant{ID: uuid.MustParse(id)} }
+	zeroBalances := []Balance{{Participant: participant("00000000-0000-0000-0000-000000000001")}}
+	require.Empty(t, suggestedTransfers(zeroBalances))
+
+	transfers := suggestedTransfers([]Balance{
+		{Participant: participant("00000000-0000-0000-0000-000000000004"), AmountMinor: 5000},
+		{Participant: participant("00000000-0000-0000-0000-000000000002"), AmountMinor: -10000},
+		{Participant: participant("00000000-0000-0000-0000-000000000003"), AmountMinor: 5000},
+		{Participant: participant("00000000-0000-0000-0000-000000000001"), AmountMinor: 0},
+	})
+	require.Equal(t, []uuid.UUID{
+		uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+		uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+	}, []uuid.UUID{transfers[0].PayerParticipantID, transfers[1].PayerParticipantID})
+	require.Equal(t, []uuid.UUID{
+		uuid.MustParse("00000000-0000-0000-0000-000000000003"),
+		uuid.MustParse("00000000-0000-0000-0000-000000000004"),
+	}, []uuid.UUID{transfers[0].ReceiverParticipantID, transfers[1].ReceiverParticipantID})
+	require.Equal(t, []int64{5000, 5000}, []int64{transfers[0].AmountMinor, transfers[1].AmountMinor})
+}
+
+func transferIdentity(transfers []SuggestedTransfer) []SuggestedTransfer {
+	identities := make([]SuggestedTransfer, 0, len(transfers))
+	for _, transfer := range transfers {
+		identities = append(identities, SuggestedTransfer{PayerParticipantID: transfer.PayerParticipantID, ReceiverParticipantID: transfer.ReceiverParticipantID, AmountMinor: transfer.AmountMinor})
+	}
+	return identities
+}
+
 func balanceForParticipant(balances []Balance, participantID uuid.UUID) Balance {
 	for _, balance := range balances {
 		if balance.ParticipantID == participantID {

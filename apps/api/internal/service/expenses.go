@@ -47,6 +47,14 @@ type Balance struct {
 	AmountMinor     int64
 }
 
+type SuggestedTransfer struct {
+	PayerParticipantID    uuid.UUID
+	PayerParticipant      domain.Participant
+	ReceiverParticipantID uuid.UUID
+	ReceiverParticipant   domain.Participant
+	AmountMinor           int64
+}
+
 type CreateSettlementInput struct {
 	PayerParticipantID    uuid.UUID
 	ReceiverParticipantID uuid.UUID
@@ -340,6 +348,107 @@ func (s *GroupService) ListBalances(ctx context.Context, groupID, actorID uuid.U
 		balances = append(balances, balance)
 	}
 	return balances, nil
+}
+
+func (s *GroupService) ListSuggestedTransfers(ctx context.Context, groupID, actorID uuid.UUID) ([]SuggestedTransfer, error) {
+	balances, err := s.ListBalances(ctx, groupID, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	return suggestedTransfers(balances), nil
+}
+
+type transferBalance struct {
+	participant domain.Participant
+	amountMinor int64
+}
+
+func suggestedTransfers(balances []Balance) []SuggestedTransfer {
+	debtors := make([]transferBalance, 0)
+	creditors := make([]transferBalance, 0)
+	for _, balance := range balances {
+		switch {
+		case balance.AmountMinor < 0:
+			debtors = append(debtors, transferBalance{participant: balance.Participant, amountMinor: -balance.AmountMinor})
+		case balance.AmountMinor > 0:
+			creditors = append(creditors, transferBalance{participant: balance.Participant, amountMinor: balance.AmountMinor})
+		}
+	}
+
+	sortTransferBalancesByParticipantID(debtors)
+	sortTransferBalancesByParticipantID(creditors)
+	return minimumSuggestedTransfers(debtors, creditors)
+}
+
+func minimumSuggestedTransfers(debtors, creditors []transferBalance) []SuggestedTransfer {
+	debtorIndex := firstNonZeroTransferBalance(debtors)
+	if debtorIndex == -1 {
+		return []SuggestedTransfer{}
+	}
+
+	var best []SuggestedTransfer
+	for creditorIndex, creditor := range creditors {
+		if creditor.amountMinor == 0 {
+			continue
+		}
+		amount := minInt64(debtors[debtorIndex].amountMinor, creditor.amountMinor)
+		nextDebtors := append([]transferBalance(nil), debtors...)
+		nextCreditors := append([]transferBalance(nil), creditors...)
+		nextDebtors[debtorIndex].amountMinor -= amount
+		nextCreditors[creditorIndex].amountMinor -= amount
+		candidate := append([]SuggestedTransfer{{
+			PayerParticipantID:    debtors[debtorIndex].participant.ID,
+			PayerParticipant:      debtors[debtorIndex].participant,
+			ReceiverParticipantID: creditor.participant.ID,
+			ReceiverParticipant:   creditor.participant,
+			AmountMinor:           amount,
+		}}, minimumSuggestedTransfers(nextDebtors, nextCreditors)...)
+		if len(best) == 0 || len(candidate) < len(best) || len(candidate) == len(best) && compareSuggestedTransfers(candidate, best) < 0 {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func firstNonZeroTransferBalance(balances []transferBalance) int {
+	for index, balance := range balances {
+		if balance.amountMinor > 0 {
+			return index
+		}
+	}
+	return -1
+}
+
+func sortTransferBalancesByParticipantID(balances []transferBalance) {
+	sort.Slice(balances, func(i, j int) bool {
+		return balances[i].participant.ID.String() < balances[j].participant.ID.String()
+	})
+}
+
+func compareSuggestedTransfers(left, right []SuggestedTransfer) int {
+	for index := range left {
+		if left[index].PayerParticipantID != right[index].PayerParticipantID {
+			return strings.Compare(left[index].PayerParticipantID.String(), right[index].PayerParticipantID.String())
+		}
+		if left[index].ReceiverParticipantID != right[index].ReceiverParticipantID {
+			return strings.Compare(left[index].ReceiverParticipantID.String(), right[index].ReceiverParticipantID.String())
+		}
+		if left[index].AmountMinor != right[index].AmountMinor {
+			if left[index].AmountMinor < right[index].AmountMinor {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (s *GroupService) requireActiveParticipant(ctx context.Context, groupID, userID uuid.UUID) (*domain.Participant, error) {

@@ -4,13 +4,13 @@
 
 **Blocked by:** 06 - Record and Delete Settlements.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
-- [ ] Suggested Transfers are calculated from current Balances.
-- [ ] Suggested Transfers minimize the number of repayments.
-- [ ] Tie-breaking is deterministic so the same Balances always produce the same Suggested Transfers.
-- [ ] Overpayment and zero-Balance cases are handled.
-- [ ] The Group detail view displays Suggested Transfers clearly.
-- [ ] OpenAPI documents the Suggested Transfer response shape.
-- [ ] Backend service tests cover simple settlement, multiple debtors and creditors, zero Balances, overpayment, and deterministic ordering.
-- [ ] Frontend tests cover rendering Suggested Transfers and the empty state.
+- [x] Suggested Transfers are calculated from current Balances.
+- [x] Suggested Transfers minimize the number of repayments.
+- [x] Tie-breaking is deterministic so the same Balances always produce the same Suggested Transfers.
+- [x] Overpayment and zero-Balance cases are handled.
+- [x] The Group detail view displays Suggested Transfers clearly.
+- [x] OpenAPI documents the Suggested Transfer response shape.
+- [x] Backend service tests cover simple settlement, multiple debtors and creditors, zero Balances, overpayment, and deterministic ordering.
+- [x] Frontend tests cover rendering Suggested Transfers and the empty state.
