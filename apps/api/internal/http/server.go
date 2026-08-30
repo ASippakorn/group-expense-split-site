@@ -39,6 +39,7 @@ func NewServer(cfg config.Config, auth *service.AuthService, groups *service.Gro
 	api.Post("/groups", server.requireUser, server.createGroup)
 	api.Get("/groups/:groupID/participants", server.requireUser, server.listParticipants)
 	api.Post("/groups/:groupID/participants", server.requireUser, server.addParticipant)
+	api.Get("/groups/:groupID/balances", server.requireUser, server.listBalances)
 	api.Get("/groups/:groupID/expenses", server.requireUser, server.listExpenses)
 	api.Post("/groups/:groupID/expenses", server.requireUser, server.createExpense)
 

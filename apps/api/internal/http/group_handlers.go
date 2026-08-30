@@ -34,6 +34,13 @@ type participantResponse struct {
 	Active bool         `json:"active"`
 }
 
+type balanceResponse struct {
+	Participant     participantResponse `json:"participant"`
+	PaidAmountMinor int64               `json:"paidAmountMinor"`
+	OwedAmountMinor int64               `json:"owedAmountMinor"`
+	AmountMinor     int64               `json:"amountMinor"`
+}
+
 func (s *Server) createGroup(c *fiber.Ctx) error {
 	var req createGroupRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -124,6 +131,32 @@ func (s *Server) listParticipants(c *fiber.Ctx) error {
 		response = append(response, toParticipantResponse(&participants[i]))
 	}
 	return c.JSON(fiber.Map{"participants": response})
+}
+
+func (s *Server) listBalances(c *fiber.Ctx) error {
+	groupID, err := parseGroupID(c)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Group ID is invalid.", nil)
+	}
+
+	balances, err := s.groups.ListBalances(c.UserContext(), groupID, currentUser(c).ID)
+	if errors.Is(err, service.ErrForbidden) {
+		return writeError(c, fiber.StatusForbidden, "FORBIDDEN", "You cannot view Balances for this Group.", nil)
+	}
+	if err != nil {
+		return err
+	}
+
+	response := make([]balanceResponse, 0, len(balances))
+	for _, balance := range balances {
+		response = append(response, balanceResponse{
+			Participant:     toParticipantResponse(&balance.Participant),
+			PaidAmountMinor: balance.PaidAmountMinor,
+			OwedAmountMinor: balance.OwedAmountMinor,
+			AmountMinor:     balance.AmountMinor,
+		})
+	}
+	return c.JSON(fiber.Map{"balances": response})
 }
 
 func parseGroupID(c *fiber.Ctx) (uuid.UUID, error) {

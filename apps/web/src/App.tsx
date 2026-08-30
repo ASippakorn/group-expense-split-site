@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Expense, Group, Participant, User } from "./api";
+import type { Balance, Expense, Group, Participant, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -125,6 +125,9 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [groupBalances, setGroupBalances] = useState<Record<string, Balance[]>>({});
+  const [unavailableGroupBalances, setUnavailableGroupBalances] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [participantEmail, setParticipantEmail] = useState("");
@@ -136,11 +139,34 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
   const [expenseError, setExpenseError] = useState("");
+  const [balanceError, setBalanceError] = useState("");
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [expensesLoading, setExpensesLoading] = useState(false);
+  const [balancesLoading, setBalancesLoading] = useState(false);
 
   useEffect(() => {
-    api.listGroups().then(({ groups }) => setGroups(groups));
+    api.listGroups().then(({ groups }) => {
+      setGroups(groups);
+      void Promise.all(
+        groups.map(async (group) => {
+          try {
+            const { balances } = await api.listBalances(group.id);
+            return { groupID: group.id, balances };
+          } catch {
+            return { groupID: group.id, balances: null };
+          }
+        }),
+      ).then((results) => {
+        const loadedBalances: Record<string, Balance[]> = {};
+        for (const result of results) {
+          if (result.balances) {
+            loadedBalances[result.groupID] = result.balances;
+          }
+        }
+        setGroupBalances(loadedBalances);
+        setUnavailableGroupBalances(new Set(results.filter((result) => !result.balances).map((result) => result.groupID)));
+      });
+    });
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -166,12 +192,25 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     setSelectedGroup(group);
     setParticipantError("");
     setExpenseError("");
+    setBalanceError("");
     setParticipantsLoading(true);
     setExpensesLoading(true);
+    setBalancesLoading(true);
     try {
-      const [{ participants }, { expenses }] = await Promise.all([api.listParticipants(group.id), api.listExpenses(group.id)]);
+      const [{ participants }, { expenses }, { balances }] = await Promise.all([
+        api.listParticipants(group.id),
+        api.listExpenses(group.id),
+        api.listBalances(group.id),
+      ]);
       setParticipants(participants);
       setExpenses(expenses);
+      setBalances(balances);
+      setGroupBalances((current) => ({ ...current, [group.id]: balances }));
+      setUnavailableGroupBalances((current) => {
+        const next = new Set(current);
+        next.delete(group.id);
+        return next;
+      });
       setPayerParticipantId(participants[0]?.id ?? "");
       setExpenseParticipantIds(participants.map((participant) => participant.id));
     } catch (err) {
@@ -179,6 +218,24 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     } finally {
       setParticipantsLoading(false);
       setExpensesLoading(false);
+      setBalancesLoading(false);
+    }
+  }
+
+  async function refreshBalances(groupID: string) {
+    try {
+      const { balances } = await api.listBalances(groupID);
+      setBalances(balances);
+      setBalanceError("");
+      setGroupBalances((current) => ({ ...current, [groupID]: balances }));
+      setUnavailableGroupBalances((current) => {
+        const next = new Set(current);
+        next.delete(groupID);
+        return next;
+      });
+    } catch {
+      setBalanceError("Unable to refresh Balances.");
+      setUnavailableGroupBalances((current) => new Set(current).add(groupID));
     }
   }
 
@@ -195,6 +252,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       setPayerParticipantId((current) => current || participant.id);
       setExpenseParticipantIds((current) => (current.includes(participant.id) ? current : [...current, participant.id]));
       setParticipantEmail("");
+      await refreshBalances(selectedGroup.id);
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to add Participant.");
     }
@@ -231,6 +289,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         participantIds: expenseParticipantIds,
       });
       setExpenses((current) => [expense, ...current]);
+      await refreshBalances(selectedGroup.id);
       setExpenseDescription("");
       setExpenseAmount("");
     } catch (err) {
@@ -464,6 +523,34 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                   ))}
                 </div>
               </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="balances-heading">
+                <div className="flex items-center gap-2">
+                  <CircleDollarSign aria-hidden className="text-leaf" size={20} />
+                  <h2 id="balances-heading" className="text-xl font-semibold">
+                    Balances
+                  </h2>
+                </div>
+                <p className="mt-1 text-sm text-ink/60">{selectedGroup.name}</p>
+                <div className="mt-5 space-y-2">
+                  {balancesLoading ? <p className="text-sm text-ink/60">Loading Balances...</p> : null}
+                  {balanceError ? <p className="text-sm text-coral" role="alert">{balanceError}</p> : null}
+                  {!balancesLoading && balances.length === 0 ? <p className="text-sm text-ink/60">Everyone is settled up.</p> : null}
+                  {balances.map((balance) => (
+                    <div
+                      key={balance.participant.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-ink/10 px-3 py-2 text-sm"
+                    >
+                      <p className="font-medium">
+                        {balance.participant.user.email}: {formatBalance(balance.amountMinor, selectedGroup.defaultCurrency)}
+                      </p>
+                      <p className="text-ink/60">
+                        Paid {formatMoney(balance.paidAmountMinor, selectedGroup.defaultCurrency)} · Owed {formatMoney(balance.owedAmountMinor, selectedGroup.defaultCurrency)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </>
           ) : null}
         </div>
@@ -491,10 +578,18 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                     </div>
                     <span className="rounded-md bg-mist px-2 py-1 text-sm font-medium">{group.defaultCurrency}</span>
                   </div>
-                  <dl className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                    <Metric label="Net balance" value="THB 0.00" />
-                    <Metric label="Expenses" value="0" />
-                    <Metric label="Settlements" value="0" />
+                  <dl className="mt-5 grid gap-3 text-sm">
+                    <Metric
+                      label="Your balance"
+                      value={
+                        unavailableGroupBalances.has(group.id)
+                          ? "Balance unavailable"
+                          : formatBalance(
+                              groupBalances[group.id]?.find((balance) => balance.participant.user.id === user.id)?.amountMinor ?? 0,
+                              group.defaultCurrency,
+                            )
+                      }
+                    />
                   </dl>
                   <button
                     className="mt-5 inline-flex items-center justify-center rounded-md border border-ink/15 px-3 py-2 text-sm font-medium hover:bg-mist focus:outline-none focus:ring-2 focus:ring-leaf/30"
@@ -537,4 +632,14 @@ function formatMoney(amountMinor: number, currency: string) {
   const whole = Math.floor(absolute / 100);
   const cents = String(absolute % 100).padStart(2, "0");
   return `${sign}${currency} ${whole}.${cents}`;
+}
+
+function formatBalance(amountMinor: number, currency: string) {
+  if (amountMinor > 0) {
+    return `You are owed ${formatMoney(amountMinor, currency)}`;
+  }
+  if (amountMinor < 0) {
+    return `You owe ${formatMoney(-amountMinor, currency)}`;
+  }
+  return "Settled up";
 }

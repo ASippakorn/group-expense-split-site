@@ -161,3 +161,78 @@ func TestGroupServiceCreateEqualExpenseRejectsParticipantOutsideGroup(t *testing
 
 	require.ErrorIs(t, err, ErrValidation)
 }
+
+func TestGroupServiceListBalancesCalculatesPaidAndOwedAmounts(t *testing.T) {
+	ctx := context.Background()
+	groupID := uuid.New()
+	ownerID := uuid.New()
+	friendID := uuid.New()
+	ownerParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	friendParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{
+		ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Role: domain.RoleOwner, Active: true,
+	}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{
+		ID: friendParticipantID, GroupID: groupID, UserID: friendID, Role: domain.RoleParticipant, Active: true,
+	}
+	store.expenses = []domain.Expense{{
+		GroupID: groupID, PayerParticipantID: ownerParticipantID, AmountMinor: 10001, Currency: domain.DefaultCurrency,
+		Splits: []domain.ExpenseSplit{
+			{ParticipantID: ownerParticipantID, AmountMinor: 5001},
+			{ParticipantID: friendParticipantID, AmountMinor: 5000},
+		},
+	}}
+
+	balances, err := NewGroupService(store).ListBalances(ctx, groupID, ownerID)
+
+	require.NoError(t, err)
+	require.Equal(t, []Balance{
+		{ParticipantID: ownerParticipantID, Participant: *store.participants[participantKey(groupID, ownerID)], PaidAmountMinor: 10001, OwedAmountMinor: 5001, AmountMinor: 5000},
+		{ParticipantID: friendParticipantID, Participant: *store.participants[participantKey(groupID, friendID)], PaidAmountMinor: 0, OwedAmountMinor: 5000, AmountMinor: -5000},
+	}, balances)
+}
+
+func TestGroupServiceListBalancesAccumulatesMultipleExpensesWithUnevenSplits(t *testing.T) {
+	ctx := context.Background()
+	groupID := uuid.New()
+	ownerID := uuid.New()
+	friendOneID := uuid.New()
+	friendTwoID := uuid.New()
+	ownerParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	friendOneParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	friendTwoParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000003")
+
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendOneID)] = &domain.Participant{ID: friendOneParticipantID, GroupID: groupID, UserID: friendOneID, Active: true}
+	store.participants[participantKey(groupID, friendTwoID)] = &domain.Participant{ID: friendTwoParticipantID, GroupID: groupID, UserID: friendTwoID, Active: true}
+	store.expenses = []domain.Expense{
+		{
+			GroupID: groupID, PayerParticipantID: ownerParticipantID, AmountMinor: 10001,
+			Splits: []domain.ExpenseSplit{
+				{ParticipantID: ownerParticipantID, AmountMinor: 3334},
+				{ParticipantID: friendOneParticipantID, AmountMinor: 3334},
+				{ParticipantID: friendTwoParticipantID, AmountMinor: 3333},
+			},
+		},
+		{
+			GroupID: groupID, PayerParticipantID: friendOneParticipantID, AmountMinor: 9000,
+			Splits: []domain.ExpenseSplit{
+				{ParticipantID: ownerParticipantID, AmountMinor: 3000},
+				{ParticipantID: friendOneParticipantID, AmountMinor: 3000},
+				{ParticipantID: friendTwoParticipantID, AmountMinor: 3000},
+			},
+		},
+	}
+
+	balances, err := NewGroupService(store).ListBalances(ctx, groupID, ownerID)
+
+	require.NoError(t, err)
+	require.Equal(t, []Balance{
+		{ParticipantID: ownerParticipantID, Participant: *store.participants[participantKey(groupID, ownerID)], PaidAmountMinor: 10001, OwedAmountMinor: 6334, AmountMinor: 3667},
+		{ParticipantID: friendOneParticipantID, Participant: *store.participants[participantKey(groupID, friendOneID)], PaidAmountMinor: 9000, OwedAmountMinor: 6334, AmountMinor: 2666},
+		{ParticipantID: friendTwoParticipantID, Participant: *store.participants[participantKey(groupID, friendTwoID)], PaidAmountMinor: 0, OwedAmountMinor: 6333, AmountMinor: -6333},
+	}, balances)
+}

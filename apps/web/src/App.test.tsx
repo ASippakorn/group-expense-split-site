@@ -9,6 +9,7 @@ vi.mock("./api", () => ({
   listGroups: vi.fn(),
   createGroup: vi.fn(),
   listParticipants: vi.fn(),
+	listBalances: vi.fn(),
   addParticipant: vi.fn(),
   listExpenses: vi.fn(),
   createExpense: vi.fn(),
@@ -22,6 +23,7 @@ describe("App", () => {
     vi.mocked(api.getMe).mockRejectedValue(new Error("not signed in"));
     vi.mocked(api.listGroups).mockResolvedValue({ groups: [] });
     vi.mocked(api.listParticipants).mockResolvedValue({ participants: [] });
+	vi.mocked(api.listBalances).mockResolvedValue({ balances: [] });
     vi.mocked(api.listExpenses).mockResolvedValue({ expenses: [] });
     vi.mocked(api.addParticipant).mockResolvedValue({
       participant: {
@@ -229,5 +231,56 @@ describe("App", () => {
     expect(await screen.findByText("Noodles")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com: THB 50.01")).toBeInTheDocument();
     expect(screen.getByText("friend@example.com: THB 50.00")).toBeInTheDocument();
+  });
+
+  it("renders Balance summaries on Group cards and in Group detail", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({
+      groups: [
+        {
+          id: "group-1",
+          name: "Bangkok Food Crawl",
+          defaultCurrency: "THB",
+          description: "Dinner",
+          ownerId: "owner-1",
+        },
+      ],
+    });
+    vi.mocked(api.listParticipants).mockResolvedValue({
+      participants: [
+        { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+        { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+      ],
+    });
+    vi.mocked(api.listBalances).mockResolvedValue({
+      balances: [
+        {
+          participant: { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+          paidAmountMinor: 10001,
+          owedAmountMinor: 5001,
+          amountMinor: 5000,
+        },
+        {
+          participant: { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+          paidAmountMinor: 0,
+          owedAmountMinor: 5000,
+          amountMinor: -5000,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("You are owed THB 50.00")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open Bangkok Food Crawl/i }));
+
+    expect(await screen.findByRole("heading", { name: "Balances" })).toBeInTheDocument();
+    expect(screen.getByText("owner@example.com: You are owed THB 50.00")).toBeInTheDocument();
+    expect(screen.getByText("friend@example.com: You owe THB 50.00")).toBeInTheDocument();
   });
 });

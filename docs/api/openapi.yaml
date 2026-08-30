@@ -242,6 +242,30 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/balances:
+    get:
+      summary: List derived Balances for a Group
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Balances visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [balances]
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Balance"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   parameters:
     GroupId:
@@ -438,6 +462,24 @@ components:
           type: integer
           format: int64
           example: 5001
+    Balance:
+      required: [participant, paidAmountMinor, owedAmountMinor, amountMinor]
+      properties:
+        participant:
+          $ref: "#/components/schemas/Participant"
+        paidAmountMinor:
+          type: integer
+          format: int64
+          example: 10001
+        owedAmountMinor:
+          type: integer
+          format: int64
+          example: 5001
+        amountMinor:
+          type: integer
+          format: int64
+          description: Positive when the Participant is owed money and negative when they owe money.
+          example: 5000
     ErrorEnvelope:
       type: object
       required: [error]

@@ -37,6 +37,13 @@ export type Expense = {
   splits: ExpenseSplit[];
 };
 
+export type Balance = {
+  participant: Participant;
+  paidAmountMinor: number;
+  owedAmountMinor: number;
+  amountMinor: number;
+};
+
 type ApiError = {
   error: {
     code: string;
@@ -121,6 +128,10 @@ export function addParticipant(groupId: string, email: string) {
 
 export function listExpenses(groupId: string) {
   return request<{ expenses: Expense[] }>(`/groups/${groupId}/expenses`);
+}
+
+export function listBalances(groupId: string) {
+  return request<{ balances: Balance[] }>(`/groups/${groupId}/balances`);
 }
 
 export function createExpense(

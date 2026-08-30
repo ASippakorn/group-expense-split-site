@@ -21,6 +21,14 @@ type CreateEqualExpenseInput struct {
 	ParticipantIDs     []uuid.UUID
 }
 
+type Balance struct {
+	ParticipantID   uuid.UUID
+	Participant     domain.Participant
+	PaidAmountMinor int64
+	OwedAmountMinor int64
+	AmountMinor     int64
+}
+
 func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateEqualExpenseInput) (*domain.Expense, error) {
 	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
 		return nil, err
@@ -85,6 +93,53 @@ func (s *GroupService) ListExpenses(ctx context.Context, groupID, actorID uuid.U
 		return nil, err
 	}
 	return s.store.ListExpensesForGroup(ctx, groupID)
+}
+
+func (s *GroupService) ListBalances(ctx context.Context, groupID, actorID uuid.UUID) ([]Balance, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+
+	participants, err := s.store.ListParticipantsForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	expenses, err := s.store.ListExpensesForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	balancesByParticipantID := make(map[uuid.UUID]Balance, len(participants))
+	for _, participant := range participants {
+		balancesByParticipantID[participant.ID] = Balance{ParticipantID: participant.ID, Participant: participant}
+	}
+	for _, expense := range expenses {
+		balance := balancesByParticipantID[expense.PayerParticipantID]
+		balance.PaidAmountMinor += expense.AmountMinor
+		balancesByParticipantID[expense.PayerParticipantID] = balance
+
+		for _, split := range expense.Splits {
+			balance := balancesByParticipantID[split.ParticipantID]
+			balance.OwedAmountMinor += split.AmountMinor
+			balancesByParticipantID[split.ParticipantID] = balance
+		}
+	}
+
+	participantIDs := make([]uuid.UUID, 0, len(balancesByParticipantID))
+	for participantID := range balancesByParticipantID {
+		participantIDs = append(participantIDs, participantID)
+	}
+	sort.Slice(participantIDs, func(i, j int) bool {
+		return participantIDs[i].String() < participantIDs[j].String()
+	})
+
+	balances := make([]Balance, 0, len(participantIDs))
+	for _, participantID := range participantIDs {
+		balance := balancesByParticipantID[participantID]
+		balance.AmountMinor = balance.PaidAmountMinor - balance.OwedAmountMinor
+		balances = append(balances, balance)
+	}
+	return balances, nil
 }
 
 func (s *GroupService) requireActiveParticipant(ctx context.Context, groupID, userID uuid.UUID) (*domain.Participant, error) {
