@@ -23,6 +23,7 @@ export type ExpenseSplit = {
   participantId: string;
   participant: Participant;
   amountMinor: number;
+  percentage?: string;
 };
 
 export type Expense = {
@@ -31,7 +32,7 @@ export type Expense = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  splitType: "equal";
+  splitType: "equal" | "manual_amount" | "percentage";
   payerParticipantId: string;
   payer: Participant;
   splits: ExpenseSplit[];
@@ -143,6 +144,8 @@ export function createExpense(
     expenseDate: string;
     payerParticipantId: string;
     participantIds: string[];
+    splitType?: "equal" | "manual_amount" | "percentage";
+    splits?: { participantId: string; amountMinor?: number; percentage?: string }[];
   },
 ) {
   return request<{ expense: Expense }>(`/groups/${groupId}/expenses`, {

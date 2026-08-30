@@ -58,6 +58,83 @@ func TestGroupServiceCreateEqualExpense(t *testing.T) {
 	require.Equal(t, int64(5000), expense.Splits[1].AmountMinor)
 }
 
+func TestGroupServiceCreateManualAmountExpenseAndUpdatesBalances(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID, friendID := uuid.New(), uuid.New(), uuid.New()
+	ownerParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000101")
+	friendParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000102")
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{ID: friendParticipantID, GroupID: groupID, UserID: friendID, Active: true}
+
+	expense, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Dinner", AmountMinor: 10000, Currency: "THB", ExpenseDate: "2026-08-14",
+		PayerParticipantID: ownerParticipantID, SplitType: domain.SplitTypeManualAmount,
+		Splits: []CreateSplitInput{{ParticipantID: ownerParticipantID, AmountMinor: 2500}, {ParticipantID: friendParticipantID, AmountMinor: 7500}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, domain.SplitTypeManualAmount, expense.SplitType)
+	require.Equal(t, int64(2500), expense.Splits[0].AmountMinor)
+	require.Equal(t, int64(7500), expense.Splits[1].AmountMinor)
+	balances, err := NewGroupService(store).ListBalances(ctx, groupID, ownerID)
+	require.NoError(t, err)
+	require.Equal(t, int64(7500), balances[0].AmountMinor)
+	require.Equal(t, int64(-7500), balances[1].AmountMinor)
+}
+
+func TestGroupServiceRejectsManualAmountsThatDoNotEqualExpense(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID := uuid.New(), uuid.New()
+	participantID := uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: participantID, GroupID: groupID, UserID: ownerID, Active: true}
+
+	_, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Dinner", AmountMinor: 10000, Currency: "THB", ExpenseDate: "2026-08-14", PayerParticipantID: participantID,
+		SplitType: domain.SplitTypeManualAmount, Splits: []CreateSplitInput{{ParticipantID: participantID, AmountMinor: 9999}},
+	})
+
+	require.ErrorIs(t, err, ErrValidation)
+}
+
+func TestGroupServiceCreatesPercentageExpenseWithDeterministicRounding(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID, friendID := uuid.New(), uuid.New(), uuid.New()
+	ownerParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000201")
+	friendParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000202")
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{ID: friendParticipantID, GroupID: groupID, UserID: friendID, Active: true}
+
+	expense, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Taxi", AmountMinor: 10001, Currency: "THB", ExpenseDate: "2026-08-14", PayerParticipantID: ownerParticipantID,
+		SplitType: domain.SplitTypePercentage,
+		Splits:    []CreateSplitInput{{ParticipantID: friendParticipantID, PercentageBasisPoints: 5000}, {ParticipantID: ownerParticipantID, PercentageBasisPoints: 5000}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, domain.SplitTypePercentage, expense.SplitType)
+	require.Equal(t, int64(5001), expense.Splits[0].AmountMinor)
+	require.Equal(t, int64(5000), expense.Splits[1].AmountMinor)
+	require.Equal(t, int64(5000), expense.Splits[0].PercentageBasisPoints)
+}
+
+func TestGroupServiceRejectsPercentagesThatDoNotEqualOneHundredPercent(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID := uuid.New(), uuid.New()
+	participantID := uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: participantID, GroupID: groupID, UserID: ownerID, Active: true}
+
+	_, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Taxi", AmountMinor: 10000, Currency: "THB", ExpenseDate: "2026-08-14", PayerParticipantID: participantID,
+		SplitType: domain.SplitTypePercentage, Splits: []CreateSplitInput{{ParticipantID: participantID, PercentageBasisPoints: 9999}},
+	})
+
+	require.ErrorIs(t, err, ErrValidation)
+}
+
 func TestGroupServiceCreateEqualExpenseDefaultsCurrencyToTHB(t *testing.T) {
 	ctx := context.Background()
 	groupID := uuid.New()

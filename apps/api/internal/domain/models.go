@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	RoleOwner       = "owner"
-	RoleParticipant = "participant"
-	DefaultCurrency = "THB"
-	SplitTypeEqual  = "equal"
+	RoleOwner             = "owner"
+	RoleParticipant       = "participant"
+	DefaultCurrency       = "THB"
+	SplitTypeEqual        = "equal"
+	SplitTypeManualAmount = "manual_amount"
+	SplitTypePercentage   = "percentage"
 )
 
 type User struct {
@@ -119,13 +121,14 @@ func (e *Expense) BeforeCreate(_ *gorm.DB) error {
 }
 
 type ExpenseSplit struct {
-	ID            uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
-	ExpenseID     uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
-	Expense       Expense
-	ParticipantID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
-	Participant   Participant
-	AmountMinor   int64 `gorm:"not null"`
-	CreatedAt     time.Time
+	ID                    uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	ExpenseID             uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Expense               Expense
+	ParticipantID         uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Participant           Participant
+	AmountMinor           int64 `gorm:"not null"`
+	PercentageBasisPoints int64 `gorm:"not null;default:0"`
+	CreatedAt             time.Time
 }
 
 func (s *ExpenseSplit) BeforeCreate(_ *gorm.DB) error {

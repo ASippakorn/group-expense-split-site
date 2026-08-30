@@ -136,6 +136,8 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [expenseDate, setExpenseDate] = useState("");
   const [payerParticipantId, setPayerParticipantId] = useState("");
   const [expenseParticipantIds, setExpenseParticipantIds] = useState<string[]>([]);
+  const [splitType, setSplitType] = useState<"equal" | "manual_amount" | "percentage">("equal");
+  const [splitValues, setSplitValues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
   const [expenseError, setExpenseError] = useState("");
@@ -213,6 +215,8 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       });
       setPayerParticipantId(participants[0]?.id ?? "");
       setExpenseParticipantIds(participants.map((participant) => participant.id));
+      setSplitValues({});
+      setSplitType("equal");
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to load Group details.");
     } finally {
@@ -278,6 +282,20 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       return;
     }
 
+    const splits = expenseParticipantIds.map((participantId) => ({
+      participantId,
+      amountMinor: splitType === "manual_amount" ? parseMoneyMinor(splitValues[participantId] ?? "") : undefined,
+      percentage: splitType === "percentage" ? splitValues[participantId]?.trim() : undefined,
+    }));
+    if (splitType === "manual_amount" && (splits.some((split) => split.amountMinor === null) || splits.reduce((total, split) => total + (split.amountMinor ?? 0), 0) !== amountMinor)) {
+      setExpenseError("Manual Split amounts must exactly equal the Expense amount.");
+      return;
+    }
+    if (splitType === "percentage" && (!splits.every((split) => isValidPercentage(split.percentage ?? "")) || percentageBasisPoints(splits) !== 10000)) {
+      setExpenseError("Percentage Splits must exactly total 100%.");
+      return;
+    }
+
     setExpenseError("");
     try {
       const { expense } = await api.createExpense(selectedGroup.id, {
@@ -287,11 +305,20 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         expenseDate,
         payerParticipantId,
         participantIds: expenseParticipantIds,
+        ...(splitType !== "equal" ? {
+          splitType,
+          splits: splits.map((split) => ({
+            participantId: split.participantId,
+            ...(split.amountMinor !== undefined ? { amountMinor: split.amountMinor ?? undefined } : {}),
+            ...(split.percentage !== undefined ? { percentage: split.percentage } : {}),
+          })),
+        } : {}),
       });
       setExpenses((current) => [expense, ...current]);
       await refreshBalances(selectedGroup.id);
       setExpenseDescription("");
       setExpenseAmount("");
+      setSplitValues({});
     } catch (err) {
       setExpenseError(err instanceof Error ? err.message : "Unable to add Expense.");
     }
@@ -303,6 +330,19 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         ? current.filter((selectedParticipantID) => selectedParticipantID !== participantID)
         : [...current, participantID],
     );
+  }
+
+  function changeSplitType(value: "equal" | "manual_amount" | "percentage") {
+    setSplitType(value);
+    setSplitValues((current) => {
+      if (Object.keys(current).length > 0 || value !== "percentage") return current;
+      const next: Record<string, string> = {};
+      expenseParticipantIds.forEach((participantID, index) => {
+        const basisPoints = index === expenseParticipantIds.length - 1 ? 10000 - Math.floor(10000 / expenseParticipantIds.length) * index : Math.floor(10000 / expenseParticipantIds.length);
+        next[participantID] = formatPercentageInput(basisPoints);
+      });
+      return next;
+    });
   }
 
   return (
@@ -471,8 +511,17 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                       </select>
                     </label>
 
+                    <label className="block text-sm font-medium">
+                      Split type
+                      <select className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={splitType} onChange={(event) => changeSplitType(event.target.value as "equal" | "manual_amount" | "percentage")}>
+                        <option value="equal">Equal</option>
+                        <option value="manual_amount">Manual amount</option>
+                        <option value="percentage">Percentage</option>
+                      </select>
+                    </label>
+
                     <fieldset className="space-y-2">
-                      <legend className="text-sm font-medium">Equal Split</legend>
+                      <legend className="text-sm font-medium">{splitType === "equal" ? "Equal Split" : "Split Participants"}</legend>
                       {participants.map((participant) => (
                         <label key={participant.id} className="flex items-center gap-2 text-sm">
                           <input
@@ -482,6 +531,12 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                             onChange={() => toggleExpenseParticipant(participant.id)}
                           />
                           <span>Split with {participant.user.email}</span>
+                          {splitType === "manual_amount" ? (
+                            <input aria-label={`Amount for ${participant.user.email}`} className="ml-auto w-28 rounded-md border border-ink/20 px-2 py-1" inputMode="decimal" value={splitValues[participant.id] ?? ""} onChange={(event) => setSplitValues((current) => ({ ...current, [participant.id]: event.target.value }))} />
+                          ) : null}
+                          {splitType === "percentage" ? (
+                            <input aria-label={`Percentage for ${participant.user.email}`} className="ml-auto w-28 rounded-md border border-ink/20 px-2 py-1" inputMode="decimal" value={splitValues[participant.id] ?? ""} onChange={(event) => setSplitValues((current) => ({ ...current, [participant.id]: event.target.value }))} />
+                          ) : null}
                         </label>
                       ))}
                     </fieldset>
@@ -509,13 +564,14 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                           <p className="mt-1 text-ink/60">
                             {expense.payer.user.email} paid {formatMoney(expense.amountMinor, expense.currency)}
                           </p>
+                          <p className="mt-1 text-ink/60">Split: {formatSplitType(expense.splitType)}</p>
                         </div>
                         <span className="rounded-md bg-mist px-2 py-1 text-ink/70">{expense.expenseDate}</span>
                       </div>
                       <ul className="mt-3 space-y-1 text-ink/70">
                         {expense.splits.map((split) => (
                           <li key={split.id}>
-                            {split.participant.user.email}: {formatMoney(split.amountMinor, expense.currency)}
+                            {split.participant.user.email}: {formatMoney(split.amountMinor, expense.currency)}{expense.splitType === "percentage" ? ` (${split.percentage}%)` : ""}
                           </li>
                         ))}
                       </ul>
@@ -624,6 +680,27 @@ function parseMoneyMinor(value: string) {
 
   const [whole, cents = ""] = trimmed.split(".");
   return Number(whole) * 100 + Number(cents.padEnd(2, "0"));
+}
+
+function isValidPercentage(value: string) {
+  return /^\d+(\.\d{1,2})?$/.test(value.trim());
+}
+
+function percentageBasisPoints(splits: { percentage?: string }[]) {
+  return splits.reduce((total, split) => {
+    const [whole, fraction = ""] = (split.percentage ?? "").trim().split(".");
+    return total + Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  }, 0);
+}
+
+function formatPercentageInput(basisPoints: number) {
+  return (basisPoints / 100).toFixed(2).replace(/\.00$/, "");
+}
+
+function formatSplitType(splitType: Expense["splitType"]) {
+  if (splitType === "manual_amount") return "Manual amount";
+  if (splitType === "percentage") return "Percentage";
+  return "Equal";
 }
 
 function formatMoney(amountMinor: number, currency: string) {

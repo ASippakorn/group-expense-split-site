@@ -229,6 +229,7 @@ describe("App", () => {
       }),
     );
     expect(await screen.findByText("Noodles")).toBeInTheDocument();
+    expect(screen.getByText("Split: Equal")).toBeInTheDocument();
     expect(screen.getByText("owner@example.com: THB 50.01")).toBeInTheDocument();
     expect(screen.getByText("friend@example.com: THB 50.00")).toBeInTheDocument();
   });
@@ -282,5 +283,60 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Balances" })).toBeInTheDocument();
     expect(screen.getByText("owner@example.com: You are owed THB 50.00")).toBeInTheDocument();
     expect(screen.getByText("friend@example.com: You owe THB 50.00")).toBeInTheDocument();
+  });
+
+  it("switches to manual amount Splits and shows client validation errors", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({ groups: [{ id: "group-1", name: "Bangkok Food Crawl", defaultCurrency: "THB", description: "Dinner", ownerId: "owner-1" }] });
+    vi.mocked(api.listParticipants).mockResolvedValue({ participants: [
+      { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+    ] });
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+    fireEvent.change(await screen.findByLabelText("Expense description"), { target: { value: "Dinner" } });
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-08-14" } });
+    fireEvent.change(screen.getByLabelText("Split type"), { target: { value: "manual_amount" } });
+    fireEvent.change(screen.getByLabelText("Amount for owner@example.com"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("Amount for friend@example.com"), { target: { value: "70" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Expense" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Manual Split amounts must exactly equal the Expense amount.");
+    expect(api.createExpense).not.toHaveBeenCalled();
+  });
+
+  it("sends percentage Split values from the Group detail form", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({ groups: [{ id: "group-1", name: "Bangkok Food Crawl", defaultCurrency: "THB", description: "Dinner", ownerId: "owner-1" }] });
+    vi.mocked(api.listParticipants).mockResolvedValue({ participants: [
+      { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+    ] });
+    vi.mocked(api.createExpense).mockResolvedValue({ expense: {
+      id: "expense-2", description: "Dinner", amountMinor: 10000, currency: "THB", expenseDate: "2026-08-14", splitType: "percentage", payerParticipantId: "participant-1",
+      payer: { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      splits: [],
+    } });
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+    fireEvent.change(await screen.findByLabelText("Expense description"), { target: { value: "Dinner" } });
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-08-14" } });
+    fireEvent.change(screen.getByLabelText("Split type"), { target: { value: "percentage" } });
+    fireEvent.change(screen.getByLabelText("Percentage for owner@example.com"), { target: { value: "40" } });
+    fireEvent.change(screen.getByLabelText("Percentage for friend@example.com"), { target: { value: "59" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Expense" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Percentage Splits must exactly total 100%.");
+    expect(api.createExpense).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Percentage for friend@example.com"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Expense" }));
+
+    await waitFor(() => expect(api.createExpense).toHaveBeenCalledWith("group-1", expect.objectContaining({
+      splitType: "percentage",
+      splits: [{ participantId: "participant-1", percentage: "40" }, { participantId: "participant-2", percentage: "60" }],
+    })));
   });
 });

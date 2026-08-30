@@ -21,6 +21,23 @@ type CreateEqualExpenseInput struct {
 	ParticipantIDs     []uuid.UUID
 }
 
+type CreateSplitInput struct {
+	ParticipantID         uuid.UUID
+	AmountMinor           int64
+	PercentageBasisPoints int64
+}
+
+type CreateExpenseInput struct {
+	Description        string
+	AmountMinor        int64
+	Currency           string
+	ExpenseDate        string
+	PayerParticipantID uuid.UUID
+	SplitType          string
+	ParticipantIDs     []uuid.UUID
+	Splits             []CreateSplitInput
+}
+
 type Balance struct {
 	ParticipantID   uuid.UUID
 	Participant     domain.Participant
@@ -30,6 +47,13 @@ type Balance struct {
 }
 
 func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateEqualExpenseInput) (*domain.Expense, error) {
+	return s.CreateExpense(ctx, groupID, actorID, CreateExpenseInput{
+		Description: input.Description, AmountMinor: input.AmountMinor, Currency: input.Currency, ExpenseDate: input.ExpenseDate,
+		PayerParticipantID: input.PayerParticipantID, SplitType: domain.SplitTypeEqual, ParticipantIDs: input.ParticipantIDs,
+	})
+}
+
+func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateExpenseInput) (*domain.Expense, error) {
 	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
 		return nil, err
 	}
@@ -40,11 +64,17 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 	if currency == "" {
 		currency = domain.DefaultCurrency
 	}
-	if err != nil || description == "" || input.AmountMinor <= 0 || len(currency) != 3 || len(input.ParticipantIDs) == 0 {
+	if err != nil || description == "" || input.AmountMinor <= 0 || len(currency) != 3 {
 		return nil, ErrValidation
 	}
 
 	participantIDs := uniqueParticipantIDs(input.ParticipantIDs)
+	if input.SplitType == domain.SplitTypeManualAmount || input.SplitType == domain.SplitTypePercentage {
+		participantIDs = splitParticipantIDs(input.Splits)
+	}
+	if len(participantIDs) == 0 {
+		return nil, ErrValidation
+	}
 	selected := make(map[uuid.UUID]domain.Participant, len(participantIDs))
 	for _, participantID := range participantIDs {
 		participant, err := s.store.FindParticipantByID(ctx, groupID, participantID)
@@ -65,7 +95,20 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 	sort.Slice(participantIDs, func(i, j int) bool {
 		return participantIDs[i].String() < participantIDs[j].String()
 	})
-	splits := equalSplits(input.AmountMinor, participantIDs)
+	var splits []domain.ExpenseSplit
+	switch input.SplitType {
+	case domain.SplitTypeEqual:
+		splits = equalSplits(input.AmountMinor, participantIDs)
+	case domain.SplitTypeManualAmount:
+		splits, err = manualAmountSplits(input.AmountMinor, participantIDs, input.Splits)
+	case domain.SplitTypePercentage:
+		splits, err = percentageSplits(input.AmountMinor, participantIDs, input.Splits)
+	default:
+		return nil, ErrValidation
+	}
+	if err != nil {
+		return nil, ErrValidation
+	}
 	for index := range splits {
 		splits[index].Participant = selected[splits[index].ParticipantID]
 	}
@@ -78,7 +121,7 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 		AmountMinor:        input.AmountMinor,
 		Currency:           currency,
 		ExpenseDate:        expenseDate,
-		SplitType:          domain.SplitTypeEqual,
+		SplitType:          input.SplitType,
 		Splits:             splits,
 	}
 
@@ -86,6 +129,78 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 		return nil, err
 	}
 	return expense, nil
+}
+
+func splitParticipantIDs(splits []CreateSplitInput) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(splits))
+	for _, split := range splits {
+		ids = append(ids, split.ParticipantID)
+	}
+	return uniqueParticipantIDs(ids)
+}
+
+func manualAmountSplits(amountMinor int64, participantIDs []uuid.UUID, inputs []CreateSplitInput) ([]domain.ExpenseSplit, error) {
+	if len(participantIDs) != len(inputs) {
+		return nil, ErrValidation
+	}
+	amounts := make(map[uuid.UUID]int64, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		if input.AmountMinor < 0 {
+			return nil, ErrValidation
+		}
+		if _, exists := amounts[input.ParticipantID]; exists {
+			return nil, ErrValidation
+		}
+		amounts[input.ParticipantID] = input.AmountMinor
+		total += input.AmountMinor
+	}
+	if total != amountMinor {
+		return nil, ErrValidation
+	}
+	splits := make([]domain.ExpenseSplit, 0, len(participantIDs))
+	for _, participantID := range participantIDs {
+		splits = append(splits, domain.ExpenseSplit{ParticipantID: participantID, AmountMinor: amounts[participantID]})
+	}
+	return splits, nil
+}
+
+func percentageSplits(amountMinor int64, participantIDs []uuid.UUID, inputs []CreateSplitInput) ([]domain.ExpenseSplit, error) {
+	if len(participantIDs) != len(inputs) {
+		return nil, ErrValidation
+	}
+	percentages := make(map[uuid.UUID]int64, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		if input.PercentageBasisPoints <= 0 {
+			return nil, ErrValidation
+		}
+		if _, exists := percentages[input.ParticipantID]; exists {
+			return nil, ErrValidation
+		}
+		percentages[input.ParticipantID] = input.PercentageBasisPoints
+		total += input.PercentageBasisPoints
+	}
+	if total != 10000 {
+		return nil, ErrValidation
+	}
+	splits := make([]domain.ExpenseSplit, 0, len(participantIDs))
+	var allocated int64
+	for _, participantID := range participantIDs {
+		amount := amountMinor * percentages[participantID] / 10000
+		allocated += amount
+		splits = append(splits, domain.ExpenseSplit{ParticipantID: participantID, AmountMinor: amount, PercentageBasisPoints: percentages[participantID]})
+	}
+	sort.SliceStable(splits, func(i, j int) bool {
+		leftRemainder := (amountMinor * splits[i].PercentageBasisPoints) % 10000
+		rightRemainder := (amountMinor * splits[j].PercentageBasisPoints) % 10000
+		return leftRemainder > rightRemainder
+	})
+	for index := int64(0); index < amountMinor-allocated; index++ {
+		splits[index].AmountMinor++
+	}
+	sort.Slice(splits, func(i, j int) bool { return splits[i].ParticipantID.String() < splits[j].ParticipantID.String() })
+	return splits, nil
 }
 
 func (s *GroupService) ListExpenses(ctx context.Context, groupID, actorID uuid.UUID) ([]domain.Expense, error) {

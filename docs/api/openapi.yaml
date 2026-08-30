@@ -214,7 +214,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
-      summary: Create an equal Split Expense
+      summary: Create an Expense with equal, manual amount, or percentage Splits
       security:
         - sessionCookie: []
       parameters:
@@ -339,7 +339,7 @@ components:
           format: email
     CreateExpenseRequest:
       type: object
-      required: [description, amountMinor, expenseDate, payerParticipantId, participantIds]
+      required: [description, amountMinor, expenseDate, payerParticipantId]
       properties:
         description:
           type: string
@@ -361,12 +361,39 @@ components:
         payerParticipantId:
           type: string
           format: uuid
+        splitType:
+          type: string
+          enum: [equal, manual_amount, percentage]
+          default: equal
         participantIds:
           type: array
           minItems: 1
           items:
             type: string
             format: uuid
+          description: Required for equal Splits; the Payer must be included.
+        splits:
+          type: array
+          minItems: 1
+          description: Required for manual_amount and percentage Splits.
+          items:
+            $ref: "#/components/schemas/CreateExpenseSplit"
+    CreateExpenseSplit:
+      type: object
+      required: [participantId]
+      properties:
+        participantId:
+          type: string
+          format: uuid
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Required for manual_amount Splits. Values must total the Expense amount.
+        percentage:
+          type: string
+          pattern: '^\\d+(\\.\\d{1,2})?$'
+          description: Required for percentage Splits. Values must total exactly 100.
     UserEnvelope:
       type: object
       required: [user]
@@ -436,7 +463,7 @@ components:
           format: date
         splitType:
           type: string
-          enum: [equal]
+          enum: [equal, manual_amount, percentage]
         payerParticipantId:
           type: string
           format: uuid
@@ -462,6 +489,10 @@ components:
           type: integer
           format: int64
           example: 5001
+        percentage:
+          type: string
+          description: Present for percentage Splits, using up to two decimal places.
+          example: "50"
     Balance:
       required: [participant, paidAmountMinor, owedAmountMinor, amountMinor]
       properties:
