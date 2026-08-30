@@ -27,6 +27,7 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: apps/api/go.sum
       - run: go test ./...
+      - run: go vet ./...
 
   web-checks:
     name: Web lint and tests
@@ -40,3 +41,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm openapi:lint
+      - run: pnpm build
