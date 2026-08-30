@@ -1,11 +1,11 @@
 const {
-  DEEPSEEK_API_KEY,
+  GEMINI_API_KEY,
   GITHUB_TOKEN,
   GITHUB_REPOSITORY,
   PR_NUMBER,
 } = process.env;
 
-if (!DEEPSEEK_API_KEY || !GITHUB_TOKEN || !GITHUB_REPOSITORY || !PR_NUMBER) {
+if (!GEMINI_API_KEY || !GITHUB_TOKEN || !GITHUB_REPOSITORY || !PR_NUMBER) {
   throw new Error("The AI review workflow is missing a required environment variable.");
 }
 
@@ -47,38 +47,42 @@ Check for concrete correctness, security, authorization, data-validation, databa
 
 Return Markdown only. Start with either "## Findings" or "## No findings". Report only actionable, high-confidence issues. For each finding, include severity (critical/high/medium/low), file path, and a concise explanation of why the changed code is problematic. Do not praise the pull request or invent issues.`;
 
-const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+const geminiResponse = await fetch(
+  "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GEMINI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "gemini-3.7-flash",
+      stream: false,
+      max_tokens: 1_200,
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: reviewInstructions },
+        {
+          role: "user",
+          content: `Review this pull-request diff. It${wasTruncated ? " was truncated because it is large" : " is complete"}.\n\n${diff}`,
+        },
+      ],
+    }),
   },
-  body: JSON.stringify({
-    model: "deepseek-v4-flash",
-    stream: false,
-    max_tokens: 1_200,
-    messages: [
-      { role: "system", content: reviewInstructions },
-      {
-        role: "user",
-        content: `Review this pull-request diff. It${wasTruncated ? " was truncated because it is large" : " is complete"}.\n\n${diff}`,
-      },
-    ],
-  }),
-});
+);
 
-if (!deepSeekResponse.ok) {
-  throw new Error(`DeepSeek API request failed (${deepSeekResponse.status}).`);
+if (!geminiResponse.ok) {
+  throw new Error(`Gemini API request failed (${geminiResponse.status}).`);
 }
 
-const completion = await deepSeekResponse.json();
+const completion = await geminiResponse.json();
 const review = completion.choices?.[0]?.message?.content?.trim();
 if (!review) {
-  throw new Error("DeepSeek returned no review text.");
+  throw new Error("Gemini returned no review text.");
 }
 
 const body = `${marker}
-## DeepSeek AI review
+## Gemini AI review
 
 ${review}
 
