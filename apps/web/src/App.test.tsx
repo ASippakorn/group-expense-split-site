@@ -13,6 +13,8 @@ vi.mock("./api", () => ({
   addParticipant: vi.fn(),
   listExpenses: vi.fn(),
   createExpense: vi.fn(),
+  listTags: vi.fn(),
+  createTag: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   register: vi.fn(),
@@ -25,6 +27,7 @@ describe("App", () => {
     vi.mocked(api.listParticipants).mockResolvedValue({ participants: [] });
 	vi.mocked(api.listBalances).mockResolvedValue({ balances: [] });
     vi.mocked(api.listExpenses).mockResolvedValue({ expenses: [] });
+    vi.mocked(api.listTags).mockResolvedValue({ tags: [] });
     vi.mocked(api.addParticipant).mockResolvedValue({
       participant: {
         id: "participant-2",
@@ -35,6 +38,7 @@ describe("App", () => {
     });
     vi.mocked(api.createGroup).mockReset();
     vi.mocked(api.createExpense).mockReset();
+    vi.mocked(api.createTag).mockReset();
     vi.mocked(api.login).mockReset();
     vi.mocked(api.logout).mockReset();
     vi.mocked(api.register).mockReset();
@@ -338,5 +342,37 @@ describe("App", () => {
       splitType: "percentage",
       splits: [{ participantId: "participant-1", percentage: "40" }, { participantId: "participant-2", percentage: "60" }],
     })));
+  });
+
+  it("creates a Tag and uses it for a tagged Expense", async () => {
+    vi.mocked(api.getMe).mockResolvedValue({ user: { id: "owner-1", email: "owner@example.com" } });
+    vi.mocked(api.listGroups).mockResolvedValue({ groups: [{ id: "group-1", name: "Bangkok Food Crawl", defaultCurrency: "THB", description: "Dinner", ownerId: "owner-1" }] });
+    vi.mocked(api.listParticipants).mockResolvedValue({ participants: [
+      { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+    ] });
+    vi.mocked(api.createTag).mockResolvedValue({ tag: { id: "tag-1", name: "Alcohol", participants: [
+      { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true },
+      { id: "participant-2", user: { id: "user-2", email: "friend@example.com" }, role: "participant", active: true },
+    ] } });
+    vi.mocked(api.createExpense).mockResolvedValue({ expense: {
+      id: "expense-3", description: "Wine", amountMinor: 9000, currency: "THB", expenseDate: "2026-08-14", splitType: "tag", tagId: "tag-1", payerParticipantId: "participant-1",
+      payer: { id: "participant-1", user: { id: "owner-1", email: "owner@example.com" }, role: "owner", active: true }, splits: [],
+    } });
+
+    render(<MemoryRouter><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /open Bangkok Food Crawl/i }));
+    fireEvent.change(await screen.findByLabelText("Tag name"), { target: { value: "Alcohol" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Tag" }));
+    await waitFor(() => expect(api.createTag).toHaveBeenCalledWith("group-1", { name: "Alcohol", participantIds: ["participant-1", "participant-2"] }));
+
+    fireEvent.change(screen.getByLabelText("Expense description"), { target: { value: "Wine" } });
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-08-14" } });
+    fireEvent.change(screen.getByLabelText("Split type"), { target: { value: "tag" } });
+    fireEvent.change(screen.getByLabelText("Tag"), { target: { value: "tag-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Expense" }));
+
+    await waitFor(() => expect(api.createExpense).toHaveBeenCalledWith("group-1", expect.objectContaining({ splitType: "tag", tagId: "tag-1" })));
   });
 });

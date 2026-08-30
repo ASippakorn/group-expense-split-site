@@ -32,10 +32,17 @@ export type Expense = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  splitType: "equal" | "manual_amount" | "percentage";
+  splitType: "equal" | "manual_amount" | "percentage" | "tag";
+  tagId?: string;
   payerParticipantId: string;
   payer: Participant;
   splits: ExpenseSplit[];
+};
+
+export type Tag = {
+  id: string;
+  name: string;
+  participants: Participant[];
 };
 
 export type Balance = {
@@ -135,6 +142,17 @@ export function listBalances(groupId: string) {
   return request<{ balances: Balance[] }>(`/groups/${groupId}/balances`);
 }
 
+export function listTags(groupId: string) {
+  return request<{ tags: Tag[] }>(`/groups/${groupId}/tags`);
+}
+
+export function createTag(groupId: string, input: { name: string; participantIds: string[] }) {
+  return request<{ tag: Tag }>(`/groups/${groupId}/tags`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function createExpense(
   groupId: string,
   input: {
@@ -144,8 +162,9 @@ export function createExpense(
     expenseDate: string;
     payerParticipantId: string;
     participantIds: string[];
-    splitType?: "equal" | "manual_amount" | "percentage";
+    splitType?: "equal" | "manual_amount" | "percentage" | "tag";
     splits?: { participantId: string; amountMinor?: number; percentage?: string }[];
+    tagId?: string;
   },
 ) {
   return request<{ expense: Expense }>(`/groups/${groupId}/expenses`, {

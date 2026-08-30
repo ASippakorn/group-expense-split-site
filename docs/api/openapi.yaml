@@ -214,7 +214,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
-      summary: Create an Expense with equal, manual amount, or percentage Splits
+      summary: Create an Expense with equal, manual amount, percentage, or Tag Splits
       security:
         - sessionCookie: []
       parameters:
@@ -236,6 +236,59 @@ paths:
                 properties:
                   expense:
                     $ref: "#/components/schemas/Expense"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/tags:
+    get:
+      summary: List Group-level Tags
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Tags visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tags]
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tag"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      summary: Create a Group-level Tag with selected Participants
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTagRequest"
+      responses:
+        "201":
+          description: Created Tag
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tag]
+                properties:
+                  tag:
+                    $ref: "#/components/schemas/Tag"
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -363,7 +416,7 @@ components:
           format: uuid
         splitType:
           type: string
-          enum: [equal, manual_amount, percentage]
+          enum: [equal, manual_amount, percentage, tag]
           default: equal
         participantIds:
           type: array
@@ -378,6 +431,23 @@ components:
           description: Required for manual_amount and percentage Splits.
           items:
             $ref: "#/components/schemas/CreateExpenseSplit"
+        tagId:
+          type: string
+          format: uuid
+          description: Required for tag Splits. Its members are charged equally.
+    CreateTagRequest:
+      type: object
+      required: [name, participantIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        participantIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
     CreateExpenseSplit:
       type: object
       required: [participantId]
@@ -463,7 +533,10 @@ components:
           format: date
         splitType:
           type: string
-          enum: [equal, manual_amount, percentage]
+          enum: [equal, manual_amount, percentage, tag]
+        tagId:
+          type: string
+          format: uuid
         payerParticipantId:
           type: string
           format: uuid
@@ -493,6 +566,18 @@ components:
           type: string
           description: Present for percentage Splits, using up to two decimal places.
           example: "50"
+    Tag:
+      required: [id, name, participants]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
     Balance:
       required: [participant, paidAmountMinor, owedAmountMinor, amountMinor]
       properties:

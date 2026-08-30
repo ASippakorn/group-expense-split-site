@@ -14,6 +14,7 @@ const (
 	SplitTypeEqual        = "equal"
 	SplitTypeManualAmount = "manual_amount"
 	SplitTypePercentage   = "percentage"
+	SplitTypeTag          = "tag"
 )
 
 type User struct {
@@ -101,10 +102,29 @@ type Expense struct {
 	AmountMinor        int64  `gorm:"not null"`
 	Currency           string `gorm:"type:char(3);not null"`
 	ExpenseDate        time.Time
-	SplitType          string `gorm:"not null"`
+	SplitType          string     `gorm:"not null"`
+	TagID              *uuid.UUID `gorm:"type:uuid"`
+	Tag                *Tag
 	Splits             []ExpenseSplit
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+type Tag struct {
+	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID      uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_tag_group_name"`
+	Group        Group
+	Name         string        `gorm:"not null;uniqueIndex:idx_tag_group_name"`
+	Participants []Participant `gorm:"many2many:tag_participants;"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (t *Tag) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	return nil
 }
 
 func (e *Expense) BeforeCreate(_ *gorm.DB) error {

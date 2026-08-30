@@ -41,6 +41,17 @@ type balanceResponse struct {
 	AmountMinor     int64               `json:"amountMinor"`
 }
 
+type createTagRequest struct {
+	Name           string   `json:"name"`
+	ParticipantIDs []string `json:"participantIds"`
+}
+
+type tagResponse struct {
+	ID           string                `json:"id"`
+	Name         string                `json:"name"`
+	Participants []participantResponse `json:"participants"`
+}
+
 func (s *Server) createGroup(c *fiber.Ctx) error {
 	var req createGroupRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -157,6 +168,63 @@ func (s *Server) listBalances(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{"balances": response})
+}
+
+func (s *Server) createTag(c *fiber.Ctx) error {
+	groupID, err := parseGroupID(c)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Group ID is invalid.", nil)
+	}
+	var req createTagRequest
+	if err := c.BodyParser(&req); err != nil {
+		return writeError(c, fiber.StatusBadRequest, "INVALID_JSON", "Request body is invalid.", nil)
+	}
+	participantIDs := make([]uuid.UUID, 0, len(req.ParticipantIDs))
+	for _, participantID := range req.ParticipantIDs {
+		id, err := uuid.Parse(participantID)
+		if err != nil {
+			return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Tag details are invalid.", nil)
+		}
+		participantIDs = append(participantIDs, id)
+	}
+	tag, err := s.groups.CreateTag(c.UserContext(), groupID, currentUser(c).ID, req.Name, participantIDs)
+	if errors.Is(err, service.ErrForbidden) {
+		return writeError(c, fiber.StatusForbidden, "FORBIDDEN", "You cannot create Tags for this Group.", nil)
+	}
+	if errors.Is(err, service.ErrValidation) {
+		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Tag details are invalid.", nil)
+	}
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"tag": toTagResponse(tag)})
+}
+
+func (s *Server) listTags(c *fiber.Ctx) error {
+	groupID, err := parseGroupID(c)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Group ID is invalid.", nil)
+	}
+	tags, err := s.groups.ListTags(c.UserContext(), groupID, currentUser(c).ID)
+	if errors.Is(err, service.ErrForbidden) {
+		return writeError(c, fiber.StatusForbidden, "FORBIDDEN", "You cannot view Tags for this Group.", nil)
+	}
+	if err != nil {
+		return err
+	}
+	response := make([]tagResponse, 0, len(tags))
+	for i := range tags {
+		response = append(response, toTagResponse(&tags[i]))
+	}
+	return c.JSON(fiber.Map{"tags": response})
+}
+
+func toTagResponse(tag *domain.Tag) tagResponse {
+	participants := make([]participantResponse, 0, len(tag.Participants))
+	for i := range tag.Participants {
+		participants = append(participants, toParticipantResponse(&tag.Participants[i]))
+	}
+	return tagResponse{ID: tag.ID.String(), Name: tag.Name, Participants: participants}
 }
 
 func parseGroupID(c *fiber.Ctx) (uuid.UUID, error) {

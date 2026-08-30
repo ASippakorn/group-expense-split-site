@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Balance, Expense, Group, Participant, User } from "./api";
+import type { Balance, Expense, Group, Participant, Tag, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -126,6 +126,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [groupBalances, setGroupBalances] = useState<Record<string, Balance[]>>({});
   const [unavailableGroupBalances, setUnavailableGroupBalances] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
@@ -136,12 +137,16 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [expenseDate, setExpenseDate] = useState("");
   const [payerParticipantId, setPayerParticipantId] = useState("");
   const [expenseParticipantIds, setExpenseParticipantIds] = useState<string[]>([]);
-  const [splitType, setSplitType] = useState<"equal" | "manual_amount" | "percentage">("equal");
+  const [splitType, setSplitType] = useState<"equal" | "manual_amount" | "percentage" | "tag">("equal");
   const [splitValues, setSplitValues] = useState<Record<string, string>>({});
+  const [tagId, setTagId] = useState("");
+  const [tagName, setTagName] = useState("");
+  const [tagParticipantIds, setTagParticipantIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
   const [expenseError, setExpenseError] = useState("");
   const [balanceError, setBalanceError] = useState("");
+  const [tagError, setTagError] = useState("");
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [expensesLoading, setExpensesLoading] = useState(false);
   const [balancesLoading, setBalancesLoading] = useState(false);
@@ -199,14 +204,16 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     setExpensesLoading(true);
     setBalancesLoading(true);
     try {
-      const [{ participants }, { expenses }, { balances }] = await Promise.all([
+      const [{ participants }, { expenses }, { balances }, { tags }] = await Promise.all([
         api.listParticipants(group.id),
         api.listExpenses(group.id),
         api.listBalances(group.id),
+        api.listTags(group.id),
       ]);
       setParticipants(participants);
       setExpenses(expenses);
       setBalances(balances);
+      setTags(tags);
       setGroupBalances((current) => ({ ...current, [group.id]: balances }));
       setUnavailableGroupBalances((current) => {
         const next = new Set(current);
@@ -217,12 +224,30 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       setExpenseParticipantIds(participants.map((participant) => participant.id));
       setSplitValues({});
       setSplitType("equal");
+      setTagId("");
+      setTagParticipantIds(participants.map((participant) => participant.id));
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to load Group details.");
     } finally {
       setParticipantsLoading(false);
       setExpensesLoading(false);
       setBalancesLoading(false);
+    }
+  }
+
+  async function submitTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedGroup || !tagName.trim() || tagParticipantIds.length === 0) {
+      setTagError("Enter a Tag name and select at least one Participant.");
+      return;
+    }
+    setTagError("");
+    try {
+      const { tag } = await api.createTag(selectedGroup.id, { name: tagName, participantIds: tagParticipantIds });
+      setTags((current) => [...current, tag].sort((left, right) => left.name.localeCompare(right.name)));
+      setTagName("");
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : "Unable to create Tag.");
     }
   }
 
@@ -275,10 +300,10 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       !expenseDescription.trim() ||
       !expenseDate ||
       !payerParticipantId ||
-      expenseParticipantIds.length === 0 ||
-      !expenseParticipantIds.includes(payerParticipantId)
+      (splitType !== "tag" && (expenseParticipantIds.length === 0 || !expenseParticipantIds.includes(payerParticipantId))) ||
+      (splitType === "tag" && (!tagId || !tags.find((tag) => tag.id === tagId)?.participants.some((participant) => participant.id === payerParticipantId)))
     ) {
-      setExpenseError("Enter an Expense description, positive amount, date, Payer, and include the Payer in the Split.");
+      setExpenseError("Enter an Expense description, positive amount, date, Payer, and include the Payer in the Split or selected Tag.");
       return;
     }
 
@@ -305,7 +330,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         expenseDate,
         payerParticipantId,
         participantIds: expenseParticipantIds,
-        ...(splitType !== "equal" ? {
+        ...(splitType === "tag" ? { splitType, tagId } : splitType !== "equal" ? {
           splitType,
           splits: splits.map((split) => ({
             participantId: split.participantId,
@@ -332,7 +357,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     );
   }
 
-  function changeSplitType(value: "equal" | "manual_amount" | "percentage") {
+  function changeSplitType(value: "equal" | "manual_amount" | "percentage" | "tag") {
     setSplitType(value);
     setSplitValues((current) => {
       if (Object.keys(current).length > 0 || value !== "percentage") return current;
@@ -451,6 +476,31 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                 </div>
               </section>
 
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="tags-heading">
+                <h2 id="tags-heading" className="text-xl font-semibold">Tags</h2>
+                <p className="mt-1 text-sm text-ink/60">Create a Group-level Tag for the Participants who share certain Expenses.</p>
+                <form onSubmit={submitTag} className="mt-4 space-y-3" noValidate>
+                  <label className="block text-sm font-medium">
+                    Tag name
+                    <input className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={tagName} onChange={(event) => setTagName(event.target.value)} />
+                  </label>
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium">Tag Participants</legend>
+                    {participants.map((participant) => (
+                      <label key={participant.id} className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={tagParticipantIds.includes(participant.id)} onChange={() => setTagParticipantIds((current) => current.includes(participant.id) ? current.filter((id) => id !== participant.id) : [...current, participant.id])} />
+                        {participant.user.email}
+                      </label>
+                    ))}
+                  </fieldset>
+                  {tagError ? <p className="text-sm text-coral" role="alert">{tagError}</p> : null}
+                  <button className="inline-flex rounded-md border border-ink/15 px-3 py-2 text-sm font-medium hover:bg-mist">Create Tag</button>
+                </form>
+                <div className="mt-4 space-y-2 text-sm">
+                  {tags.length === 0 ? <p className="text-ink/60">No Tags yet.</p> : tags.map((tag) => <p key={tag.id}><span className="font-medium">{tag.name}</span>: {tag.participants.map((participant) => participant.user.email).join(", ")}</p>)}
+                </div>
+              </section>
+
               <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="expenses-heading">
                 <div className="flex items-center gap-2">
                   <CircleDollarSign aria-hidden className="text-leaf" size={20} />
@@ -513,13 +563,23 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
 
                     <label className="block text-sm font-medium">
                       Split type
-                      <select className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={splitType} onChange={(event) => changeSplitType(event.target.value as "equal" | "manual_amount" | "percentage")}>
+                      <select className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={splitType} onChange={(event) => changeSplitType(event.target.value as "equal" | "manual_amount" | "percentage" | "tag")}>
                         <option value="equal">Equal</option>
                         <option value="manual_amount">Manual amount</option>
                         <option value="percentage">Percentage</option>
+                        <option value="tag">Tag</option>
                       </select>
                     </label>
 
+                    {splitType === "tag" ? (
+                      <label className="block text-sm font-medium">
+                        Tag
+                        <select aria-label="Tag" className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2" value={tagId} onChange={(event) => setTagId(event.target.value)}>
+                          <option value="">Select a Tag</option>
+                          {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                        </select>
+                      </label>
+                    ) : (
                     <fieldset className="space-y-2">
                       <legend className="text-sm font-medium">{splitType === "equal" ? "Equal Split" : "Split Participants"}</legend>
                       {participants.map((participant) => (
@@ -540,6 +600,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                         </label>
                       ))}
                     </fieldset>
+                    )}
 
                     {expenseError ? (
                       <p className="rounded-md border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">

@@ -120,6 +120,75 @@ func TestGroupServiceCreatesPercentageExpenseWithDeterministicRounding(t *testin
 	require.Equal(t, int64(5000), expense.Splits[0].PercentageBasisPoints)
 }
 
+func TestGroupServiceCreatesTagExpenseForTagMembersAndUpdatesBalances(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID, friendID, excludedID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000401")
+	friendParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000402")
+	excludedParticipantID := uuid.MustParse("00000000-0000-0000-0000-000000000403")
+	tagID := uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{ID: friendParticipantID, GroupID: groupID, UserID: friendID, Active: true}
+	store.participants[participantKey(groupID, excludedID)] = &domain.Participant{ID: excludedParticipantID, GroupID: groupID, UserID: excludedID, Active: true}
+	store.tags[tagID] = &domain.Tag{ID: tagID, GroupID: groupID, Name: "Alcohol", Participants: []domain.Participant{
+		*store.participants[participantKey(groupID, ownerID)], *store.participants[participantKey(groupID, friendID)],
+	}}
+
+	expense, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Wine", AmountMinor: 9000, Currency: "THB", ExpenseDate: "2026-08-14",
+		PayerParticipantID: ownerParticipantID, SplitType: domain.SplitTypeTag, TagID: tagID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, domain.SplitTypeTag, expense.SplitType)
+	require.Len(t, expense.Splits, 2)
+	require.Equal(t, int64(4500), expense.Splits[0].AmountMinor)
+	require.Equal(t, int64(4500), expense.Splits[1].AmountMinor)
+	balances, err := NewGroupService(store).ListBalances(ctx, groupID, ownerID)
+	require.NoError(t, err)
+	require.Equal(t, int64(4500), balances[0].AmountMinor)
+	require.Equal(t, int64(-4500), balances[1].AmountMinor)
+	require.Equal(t, int64(0), balances[2].AmountMinor)
+}
+
+func TestGroupServiceCreatesGroupScopedTagWithSelectedMembers(t *testing.T) {
+	ctx := context.Background()
+	groupID, ownerID, friendID := uuid.New(), uuid.New(), uuid.New()
+	ownerParticipantID, friendParticipantID := uuid.New(), uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: ownerParticipantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.participants[participantKey(groupID, friendID)] = &domain.Participant{ID: friendParticipantID, GroupID: groupID, UserID: friendID, Active: true}
+
+	tag, err := NewGroupService(store).CreateTag(ctx, groupID, ownerID, " Alcohol ", []uuid.UUID{friendParticipantID})
+
+	require.NoError(t, err)
+	require.Equal(t, groupID, tag.GroupID)
+	require.Equal(t, "Alcohol", tag.Name)
+	require.Equal(t, []domain.Participant{*store.participants[participantKey(groupID, friendID)]}, tag.Participants)
+	listed, err := NewGroupService(store).ListTags(ctx, groupID, ownerID)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	_, err = NewGroupService(store).CreateTag(ctx, groupID, ownerID, "Alcohol", []uuid.UUID{friendParticipantID})
+	require.ErrorIs(t, err, ErrValidation)
+}
+
+func TestGroupServiceRejectsTagFromAnotherGroup(t *testing.T) {
+	ctx := context.Background()
+	groupID, otherGroupID, ownerID := uuid.New(), uuid.New(), uuid.New()
+	participantID, tagID := uuid.New(), uuid.New()
+	store := newFakeGroupStore()
+	store.participants[participantKey(groupID, ownerID)] = &domain.Participant{ID: participantID, GroupID: groupID, UserID: ownerID, Active: true}
+	store.tags[tagID] = &domain.Tag{ID: tagID, GroupID: otherGroupID, Name: "Other group"}
+
+	_, err := NewGroupService(store).CreateExpense(ctx, groupID, ownerID, CreateExpenseInput{
+		Description: "Wine", AmountMinor: 9000, Currency: "THB", ExpenseDate: "2026-08-14",
+		PayerParticipantID: participantID, SplitType: domain.SplitTypeTag, TagID: tagID,
+	})
+
+	require.ErrorIs(t, err, ErrValidation)
+}
+
 func TestGroupServiceRejectsPercentagesThatDoNotEqualOneHundredPercent(t *testing.T) {
 	ctx := context.Background()
 	groupID, ownerID := uuid.New(), uuid.New()

@@ -141,6 +141,7 @@ func (s *Store) CreateExpenseWithSplits(ctx context.Context, expense *domain.Exp
 			Currency:           expense.Currency,
 			ExpenseDate:        expense.ExpenseDate,
 			SplitType:          expense.SplitType,
+			TagID:              expense.TagID,
 		}
 		if err := tx.Create(record).Error; err != nil {
 			return err
@@ -157,6 +158,34 @@ func (s *Store) CreateExpenseWithSplits(ctx context.Context, expense *domain.Exp
 		}
 		return nil
 	})
+}
+
+func (s *Store) CreateTag(ctx context.Context, tag *domain.Tag) error {
+	return s.db.WithContext(ctx).Omit("Participants.*").Create(tag).Error
+}
+
+func (s *Store) ListTagsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Tag, error) {
+	var tags []domain.Tag
+	err := s.db.WithContext(ctx).Preload("Participants.User").Where("group_id = ?", groupID).Order("name ASC").Find(&tags).Error
+	return tags, err
+}
+
+func (s *Store) FindTagByID(ctx context.Context, groupID, tagID uuid.UUID) (*domain.Tag, error) {
+	var tag domain.Tag
+	err := s.db.WithContext(ctx).Preload("Participants.User").Where("id = ? AND group_id = ?", tagID, groupID).First(&tag).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &tag, err
+}
+
+func (s *Store) FindTagByName(ctx context.Context, groupID uuid.UUID, name string) (*domain.Tag, error) {
+	var tag domain.Tag
+	err := s.db.WithContext(ctx).Where("group_id = ? AND name = ?", groupID, name).First(&tag).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &tag, err
 }
 
 func (s *Store) ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error) {

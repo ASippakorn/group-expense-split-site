@@ -21,6 +21,7 @@ type createExpenseRequest struct {
 	ParticipantIDs     []string                    `json:"participantIds"`
 	SplitType          string                      `json:"splitType"`
 	Splits             []createExpenseSplitRequest `json:"splits"`
+	TagID              string                      `json:"tagId"`
 }
 
 type createExpenseSplitRequest struct {
@@ -38,6 +39,7 @@ type expenseResponse struct {
 	SplitType          string                 `json:"splitType"`
 	PayerParticipantID string                 `json:"payerParticipantId"`
 	Payer              participantResponse    `json:"payer"`
+	TagID              string                 `json:"tagId,omitempty"`
 	Splits             []expenseSplitResponse `json:"splits"`
 }
 
@@ -73,6 +75,13 @@ func (s *Server) createExpense(c *fiber.Ctx) error {
 	if splitType == "" {
 		splitType = domain.SplitTypeEqual
 	}
+	tagID := uuid.Nil
+	if strings.TrimSpace(req.TagID) != "" {
+		tagID, err = uuid.Parse(req.TagID)
+		if err != nil {
+			return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Tag details are invalid.", nil)
+		}
+	}
 	expense, err := s.groups.CreateExpense(c.UserContext(), groupID, currentUser(c).ID, service.CreateExpenseInput{
 		Description:        req.Description,
 		AmountMinor:        req.AmountMinor,
@@ -82,6 +91,7 @@ func (s *Server) createExpense(c *fiber.Ctx) error {
 		ParticipantIDs:     participantIDs,
 		SplitType:          splitType,
 		Splits:             splits,
+		TagID:              tagID,
 	})
 	if errors.Is(err, service.ErrForbidden) {
 		return writeError(c, fiber.StatusForbidden, "FORBIDDEN", "You cannot create Expenses for this Group.", nil)
@@ -198,8 +208,16 @@ func toExpenseResponse(expense *domain.Expense) expenseResponse {
 		SplitType:          expense.SplitType,
 		PayerParticipantID: expense.PayerParticipantID.String(),
 		Payer:              toParticipantResponse(&expense.PayerParticipant),
+		TagID:              optionalUUIDString(expense.TagID),
 		Splits:             splits,
 	}
+}
+
+func optionalUUIDString(value *uuid.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
 }
 
 func formatPercentage(basisPoints int64) string {

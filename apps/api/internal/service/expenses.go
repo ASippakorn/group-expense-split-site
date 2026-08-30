@@ -36,6 +36,7 @@ type CreateExpenseInput struct {
 	SplitType          string
 	ParticipantIDs     []uuid.UUID
 	Splits             []CreateSplitInput
+	TagID              uuid.UUID
 }
 
 type Balance struct {
@@ -72,6 +73,21 @@ func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.
 	if input.SplitType == domain.SplitTypeManualAmount || input.SplitType == domain.SplitTypePercentage {
 		participantIDs = splitParticipantIDs(input.Splits)
 	}
+	if input.SplitType == domain.SplitTypeTag {
+		tag, err := s.store.FindTagByID(ctx, groupID, input.TagID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrValidation
+		}
+		if err != nil {
+			return nil, err
+		}
+		participantIDs = make([]uuid.UUID, 0, len(tag.Participants))
+		for _, participant := range tag.Participants {
+			if participant.Active {
+				participantIDs = append(participantIDs, participant.ID)
+			}
+		}
+	}
 	if len(participantIDs) == 0 {
 		return nil, ErrValidation
 	}
@@ -103,6 +119,8 @@ func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.
 		splits, err = manualAmountSplits(input.AmountMinor, participantIDs, input.Splits)
 	case domain.SplitTypePercentage:
 		splits, err = percentageSplits(input.AmountMinor, participantIDs, input.Splits)
+	case domain.SplitTypeTag:
+		splits = equalSplits(input.AmountMinor, participantIDs)
 	default:
 		return nil, ErrValidation
 	}
@@ -122,6 +140,7 @@ func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.
 		Currency:           currency,
 		ExpenseDate:        expenseDate,
 		SplitType:          input.SplitType,
+		TagID:              tagIDForExpense(input.SplitType, input.TagID),
 		Splits:             splits,
 	}
 
@@ -129,6 +148,13 @@ func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.
 		return nil, err
 	}
 	return expense, nil
+}
+
+func tagIDForExpense(splitType string, tagID uuid.UUID) *uuid.UUID {
+	if splitType != domain.SplitTypeTag || tagID == uuid.Nil {
+		return nil
+	}
+	return &tagID
 }
 
 func splitParticipantIDs(splits []CreateSplitInput) []uuid.UUID {
