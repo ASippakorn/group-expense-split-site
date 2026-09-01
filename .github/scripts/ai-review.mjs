@@ -56,7 +56,7 @@ const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions"
   body: JSON.stringify({
     model: "deepseek-v4-flash",
     stream: false,
-    max_tokens: 6_00,
+    max_tokens: 8_000,
     messages: [
       { role: "system", content: reviewInstructions },
       {
@@ -72,8 +72,13 @@ if (!deepSeekResponse.ok) {
 }
 
 const completion = await deepSeekResponse.json();
-const review = completion.choices?.[0]?.message?.content?.trim();
+const choice = completion.choices?.[0];
+const review = choice?.message?.content?.trim();
+
 if (!review) {
+  console.error("finish_reason:", choice?.finish_reason);
+  console.error("usage:", JSON.stringify(completion.usage));
+  console.error("raw message:", JSON.stringify(choice?.message));
   throw new Error("DeepSeek returned no review text.");
 }
 
