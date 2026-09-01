@@ -24,10 +24,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Review the pull request with Gemini
+      - name: Review the pull request with DeepSeek
         run: node .github/scripts/ai-review.mjs
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
