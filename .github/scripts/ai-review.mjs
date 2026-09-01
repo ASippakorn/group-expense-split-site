@@ -13,6 +13,7 @@ const [owner, repo] = GITHUB_REPOSITORY.split("/");
 const apiBase = "https://api.github.com";
 const marker = "<!-- splitr-ai-pr-review -->";
 const maxDiffCharacters = 60_000;
+const retryDiffCharacters = 16_000;
 
 async function github(path, options = {}) {
   const response = await fetch(`${apiBase}${path}`, {
@@ -37,7 +38,6 @@ const diffResponse = await github(`/repos/${owner}/${repo}/pulls/${PR_NUMBER}`, 
 });
 const fullDiff = await diffResponse.text();
 const diff = fullDiff.slice(0, maxDiffCharacters);
-const wasTruncated = fullDiff.length > maxDiffCharacters;
 
 const reviewInstructions = `You are a careful code reviewer for the Splitr group-expense application.
 
@@ -47,41 +47,49 @@ Check for concrete correctness, security, authorization, data-validation, databa
 
 Return Markdown only. Start with either "## Findings" or "## No findings". Report only actionable, high-confidence issues. For each finding, include severity (critical/high/medium/low), file path, and a concise explanation of why the changed code is problematic. Do not praise the pull request or invent issues.`;
 
-const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-  },
-  body: JSON.stringify({
-    model: "deepseek-v4-flash",
-    thinking: { type: "disabled" },
-    stream: false,
-    max_tokens: 8_000,
-    messages: [
-      { role: "system", content: reviewInstructions },
-      {
-        role: "user",
-        content: `Review this pull-request diff. It${wasTruncated ? " was truncated because it is large" : " is complete"}.\n\n${diff}`,
-      },
-    ],
-  }),
-});
+async function requestReview(reviewDiff) {
+  const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "deepseek-v4-flash",
+      thinking: { type: "disabled" },
+      stream: false,
+      max_tokens: 8_000,
+      messages: [
+        { role: "system", content: reviewInstructions },
+        {
+          role: "user",
+          content: `Review this pull-request diff. It${fullDiff.length > reviewDiff.length ? " was truncated because it is large" : " is complete"}. Keep the final review under 1,200 tokens.\n\n${reviewDiff}`,
+        },
+      ],
+    }),
+  });
 
-if (!deepSeekResponse.ok) {
-  throw new Error(`DeepSeek API request failed (${deepSeekResponse.status}).`);
+  if (!deepSeekResponse.ok) throw new Error(`DeepSeek API request failed (${deepSeekResponse.status}).`);
+
+  const completion = await deepSeekResponse.json();
+  const choice = completion.choices?.[0];
+  const review = choice?.message?.content?.trim() ?? "";
+  return {
+    completion,
+    review,
+    isComplete: review.length > 0 && choice?.finish_reason !== "length",
+    finishReason: choice?.finish_reason ?? "unknown",
+    reasoningCharacters: choice?.message?.reasoning_content?.length ?? 0,
+  };
 }
 
-const completion = await deepSeekResponse.json();
-const choice = completion.choices?.[0];
-const review = choice?.message?.content?.trim();
-
-if (!review) {
-  console.error("finish_reason:", choice?.finish_reason);
-  console.error("usage:", JSON.stringify(completion.usage));
-  console.error("raw message:", JSON.stringify(choice?.message));
-  throw new Error("DeepSeek returned no review text.");
+let result = await requestReview(diff);
+if (!result.isComplete && result.finishReason === "length") result = await requestReview(fullDiff.slice(0, retryDiffCharacters));
+if (!result.isComplete) {
+  console.error("DeepSeek produced no complete final review:", JSON.stringify({ finish_reason: result.finishReason, content_characters: result.review.length, reasoning_characters: result.reasoningCharacters, usage: result.completion.usage }));
+  throw new Error("DeepSeek returned an incomplete review.");
 }
+const review = result.review;
 
 const body = `${marker}
 ## DeepSeek AI review
