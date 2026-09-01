@@ -55,6 +55,7 @@ const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions"
   },
   body: JSON.stringify({
     model: "deepseek-v4-flash",
+    thinking: { type: "disabled" },
     stream: false,
     max_tokens: 8_000,
     messages: [
