@@ -56,7 +56,7 @@ const deepSeekResponse = await fetch("https://api.deepseek.com/chat/completions"
   body: JSON.stringify({
     model: "deepseek-v4-flash",
     stream: false,
-    max_tokens: 1_200,
+    max_tokens: 6_00,
     messages: [
       { role: "system", content: reviewInstructions },
       {
