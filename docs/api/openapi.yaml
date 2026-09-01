@@ -214,7 +214,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
-      summary: Create an equal Split Expense
+      summary: Create an Expense with equal, manual amount, percentage, or Tag Splits
       security:
         - sessionCookie: []
       parameters:
@@ -242,6 +242,132 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/tags:
+    get:
+      summary: List Group-level Tags
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Tags visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tags]
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tag"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      summary: Create a Group-level Tag with selected Participants
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTagRequest"
+      responses:
+        "201":
+          description: Created Tag
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tag]
+                properties:
+                  tag:
+                    $ref: "#/components/schemas/Tag"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/balances:
+    get:
+      summary: List derived Balances for a Group
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Balances visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [balances]
+                properties:
+                  balances:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Balance"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /groups/{groupId}/settlements:
+    get:
+      summary: List Settlements for a Group
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      responses:
+        "200":
+          description: Settlements visible to the current User
+          content: {application/json: {schema: {type: object, required: [settlements], properties: {settlements: {type: array, items: {$ref: "#/components/schemas/Settlement"}}}}}}
+        "401": {$ref: "#/components/responses/Unauthenticated"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      summary: Record a Settlement
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/CreateSettlement"}}}
+      responses:
+        "201": {description: Settlement recorded, content: {application/json: {schema: {type: object, required: [settlement], properties: {settlement: {$ref: "#/components/schemas/Settlement"}}}}}}
+        "400": {$ref: "#/components/responses/ValidationError"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /groups/{groupId}/suggested-transfers:
+    get:
+      summary: List deterministic Suggested Transfers for a Group
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}]
+      responses:
+        "200":
+          description: Suggested Transfers visible to the current User
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestedTransfers]
+                properties:
+                  suggestedTransfers:
+                    type: array
+                    items: {$ref: "#/components/schemas/SuggestedTransfer"}
+        "401": {$ref: "#/components/responses/Unauthenticated"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /groups/{groupId}/settlements/{settlementId}:
+    delete:
+      summary: Delete a Settlement
+      security: [{sessionCookie: []}]
+      parameters: [{$ref: "#/components/parameters/GroupId"}, {name: settlementId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        "204": {description: Settlement deleted}
+        "403": {$ref: "#/components/responses/Forbidden"}
 components:
   parameters:
     GroupId:
@@ -315,7 +441,7 @@ components:
           format: email
     CreateExpenseRequest:
       type: object
-      required: [description, amountMinor, expenseDate, payerParticipantId, participantIds]
+      required: [description, amountMinor, expenseDate, payerParticipantId]
       properties:
         description:
           type: string
@@ -337,12 +463,56 @@ components:
         payerParticipantId:
           type: string
           format: uuid
+        splitType:
+          type: string
+          enum: [equal, manual_amount, percentage, tag]
+          default: equal
         participantIds:
           type: array
           minItems: 1
           items:
             type: string
             format: uuid
+          description: Required for equal Splits; the Payer must be included.
+        splits:
+          type: array
+          minItems: 1
+          description: Required for manual_amount and percentage Splits.
+          items:
+            $ref: "#/components/schemas/CreateExpenseSplit"
+        tagId:
+          type: string
+          format: uuid
+          description: Required for tag Splits. Its members are charged equally.
+    CreateTagRequest:
+      type: object
+      required: [name, participantIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        participantIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+    CreateExpenseSplit:
+      type: object
+      required: [participantId]
+      properties:
+        participantId:
+          type: string
+          format: uuid
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Required for manual_amount Splits. Values must total the Expense amount.
+        percentage:
+          type: string
+          pattern: '^\\d+(\\.\\d{1,2})?$'
+          description: Required for percentage Splits. Values must total exactly 100.
     UserEnvelope:
       type: object
       required: [user]
@@ -412,7 +582,10 @@ components:
           format: date
         splitType:
           type: string
-          enum: [equal]
+          enum: [equal, manual_amount, percentage, tag]
+        tagId:
+          type: string
+          format: uuid
         payerParticipantId:
           type: string
           format: uuid
@@ -438,6 +611,78 @@ components:
           type: integer
           format: int64
           example: 5001
+        percentage:
+          type: string
+          description: Present for percentage Splits, using up to two decimal places.
+          example: "50"
+    Tag:
+      required: [id, name, participants]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
+    Balance:
+      required: [participant, paidAmountMinor, owedAmountMinor, amountMinor]
+      properties:
+        participant:
+          $ref: "#/components/schemas/Participant"
+        paidAmountMinor:
+          type: integer
+          format: int64
+          example: 10001
+        owedAmountMinor:
+          type: integer
+          format: int64
+          example: 5001
+        amountMinor:
+          type: integer
+          format: int64
+          description: Positive when the Participant is owed money and negative when they owe money.
+          example: 5000
+    SuggestedTransfer:
+      required: [payerParticipantId, payer, receiverParticipantId, receiver, amountMinor]
+      properties:
+        payerParticipantId:
+          type: string
+          format: uuid
+        payer:
+          $ref: "#/components/schemas/Participant"
+        receiverParticipantId:
+          type: string
+          format: uuid
+        receiver:
+          $ref: "#/components/schemas/Participant"
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 1
+    CreateSettlement:
+      required: [payerParticipantId, receiverParticipantId, amountMinor, currency, settlementDate]
+      properties:
+        payerParticipantId: {type: string, format: uuid}
+        receiverParticipantId: {type: string, format: uuid}
+        amountMinor: {type: integer, format: int64, minimum: 1}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        settlementDate: {type: string, format: date}
+        note: {type: string}
+    Settlement:
+      required: [id, payerParticipantId, payer, receiverParticipantId, receiver, amountMinor, currency, settlementDate, note]
+      properties:
+        id: {type: string, format: uuid}
+        payerParticipantId: {type: string, format: uuid}
+        payer: {$ref: "#/components/schemas/Participant"}
+        receiverParticipantId: {type: string, format: uuid}
+        receiver: {$ref: "#/components/schemas/Participant"}
+        amountMinor: {type: integer, format: int64}
+        currency: {type: string}
+        settlementDate: {type: string, format: date}
+        note: {type: string}
     ErrorEnvelope:
       type: object
       required: [error]

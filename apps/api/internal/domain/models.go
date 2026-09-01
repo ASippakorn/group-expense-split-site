@@ -8,10 +8,13 @@ import (
 )
 
 const (
-	RoleOwner       = "owner"
-	RoleParticipant = "participant"
-	DefaultCurrency = "THB"
-	SplitTypeEqual  = "equal"
+	RoleOwner             = "owner"
+	RoleParticipant       = "participant"
+	DefaultCurrency       = "THB"
+	SplitTypeEqual        = "equal"
+	SplitTypeManualAmount = "manual_amount"
+	SplitTypePercentage   = "percentage"
+	SplitTypeTag          = "tag"
 )
 
 type User struct {
@@ -99,10 +102,29 @@ type Expense struct {
 	AmountMinor        int64  `gorm:"not null"`
 	Currency           string `gorm:"type:char(3);not null"`
 	ExpenseDate        time.Time
-	SplitType          string `gorm:"not null"`
+	SplitType          string     `gorm:"not null"`
+	TagID              *uuid.UUID `gorm:"type:uuid"`
+	Tag                *Tag
 	Splits             []ExpenseSplit
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+type Tag struct {
+	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID      uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_tag_group_name"`
+	Group        Group
+	Name         string        `gorm:"not null;uniqueIndex:idx_tag_group_name"`
+	Participants []Participant `gorm:"many2many:tag_participants;"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (t *Tag) BeforeCreate(_ *gorm.DB) error {
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	return nil
 }
 
 func (e *Expense) BeforeCreate(_ *gorm.DB) error {
@@ -119,13 +141,38 @@ func (e *Expense) BeforeCreate(_ *gorm.DB) error {
 }
 
 type ExpenseSplit struct {
-	ID            uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
-	ExpenseID     uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
-	Expense       Expense
-	ParticipantID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
-	Participant   Participant
-	AmountMinor   int64 `gorm:"not null"`
-	CreatedAt     time.Time
+	ID                    uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	ExpenseID             uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Expense               Expense
+	ParticipantID         uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_expense_split_participant"`
+	Participant           Participant
+	AmountMinor           int64 `gorm:"not null"`
+	PercentageBasisPoints int64 `gorm:"not null;default:0"`
+	CreatedAt             time.Time
+}
+
+type Settlement struct {
+	ID                    uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	GroupID               uuid.UUID `gorm:"type:uuid;not null;index"`
+	PayerParticipantID    uuid.UUID `gorm:"type:uuid;not null;index"`
+	PayerParticipant      Participant
+	ReceiverParticipantID uuid.UUID `gorm:"type:uuid;not null;index"`
+	ReceiverParticipant   Participant
+	AmountMinor           int64     `gorm:"not null"`
+	Currency              string    `gorm:"type:char(3);not null"`
+	SettlementDate        time.Time `gorm:"not null"`
+	Note                  string    `gorm:"not null;default:''"`
+	CreatedAt             time.Time
+}
+
+func (s *Settlement) BeforeCreate(_ *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
+	}
+	if s.Currency == "" {
+		s.Currency = DefaultCurrency
+	}
+	return nil
 }
 
 func (s *ExpenseSplit) BeforeCreate(_ *gorm.DB) error {

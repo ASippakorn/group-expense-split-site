@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { CircleDollarSign, LogOut, Plus, ReceiptText, UserPlus, UsersRound } from "lucide-react";
 import * as api from "./api";
-import type { Expense, Group, Participant, User } from "./api";
+import type { Balance, Expense, Group, Participant, Settlement, SuggestedTransfer, Tag, User } from "./api";
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -125,6 +125,12 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [suggestedTransfers, setSuggestedTransfers] = useState<SuggestedTransfer[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [groupBalances, setGroupBalances] = useState<Record<string, Balance[]>>({});
+  const [unavailableGroupBalances, setUnavailableGroupBalances] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [participantEmail, setParticipantEmail] = useState("");
@@ -133,14 +139,49 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
   const [expenseDate, setExpenseDate] = useState("");
   const [payerParticipantId, setPayerParticipantId] = useState("");
   const [expenseParticipantIds, setExpenseParticipantIds] = useState<string[]>([]);
+  const [splitType, setSplitType] = useState<"equal" | "manual_amount" | "percentage" | "tag">("equal");
+  const [splitValues, setSplitValues] = useState<Record<string, string>>({});
+  const [tagId, setTagId] = useState("");
+  const [tagName, setTagName] = useState("");
+  const [tagParticipantIds, setTagParticipantIds] = useState<string[]>([]);
+  const [settlementPayerId, setSettlementPayerId] = useState("");
+  const [settlementReceiverId, setSettlementReceiverId] = useState("");
+  const [settlementAmount, setSettlementAmount] = useState("");
+  const [settlementDate, setSettlementDate] = useState("");
+  const [settlementNote, setSettlementNote] = useState("");
+  const [settlementError, setSettlementError] = useState("");
   const [error, setError] = useState("");
   const [participantError, setParticipantError] = useState("");
   const [expenseError, setExpenseError] = useState("");
+  const [balanceError, setBalanceError] = useState("");
+  const [tagError, setTagError] = useState("");
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [expensesLoading, setExpensesLoading] = useState(false);
+  const [balancesLoading, setBalancesLoading] = useState(false);
 
   useEffect(() => {
-    api.listGroups().then(({ groups }) => setGroups(groups));
+    api.listGroups().then(({ groups }) => {
+      setGroups(groups);
+      void Promise.all(
+        groups.map(async (group) => {
+          try {
+            const { balances } = await api.listBalances(group.id);
+            return { groupID: group.id, balances };
+          } catch {
+            return { groupID: group.id, balances: null };
+          }
+        }),
+      ).then((results) => {
+        const loadedBalances: Record<string, Balance[]> = {};
+        for (const result of results) {
+          if (result.balances) {
+            loadedBalances[result.groupID] = result.balances;
+          }
+        }
+        setGroupBalances(loadedBalances);
+        setUnavailableGroupBalances(new Set(results.filter((result) => !result.balances).map((result) => result.groupID)));
+      });
+    });
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -166,20 +207,102 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
     setSelectedGroup(group);
     setParticipantError("");
     setExpenseError("");
+    setBalanceError("");
     setParticipantsLoading(true);
     setExpensesLoading(true);
+    setBalancesLoading(true);
     try {
-      const [{ participants }, { expenses }] = await Promise.all([api.listParticipants(group.id), api.listExpenses(group.id)]);
+      const [{ participants }, { expenses }, { balances }, { suggestedTransfers }, { tags }, { settlements }] = await Promise.all([
+        api.listParticipants(group.id),
+        api.listExpenses(group.id),
+        api.listBalances(group.id),
+        api.listSuggestedTransfers(group.id),
+        api.listTags(group.id),
+        api.listSettlements(group.id),
+      ]);
       setParticipants(participants);
       setExpenses(expenses);
+      setBalances(balances);
+      setSuggestedTransfers(suggestedTransfers);
+      setTags(tags);
+      setSettlements(settlements);
+      setGroupBalances((current) => ({ ...current, [group.id]: balances }));
+      setUnavailableGroupBalances((current) => {
+        const next = new Set(current);
+        next.delete(group.id);
+        return next;
+      });
       setPayerParticipantId(participants[0]?.id ?? "");
       setExpenseParticipantIds(participants.map((participant) => participant.id));
+      setSplitValues({});
+      setSplitType("equal");
+      setTagId("");
+      setTagParticipantIds(participants.map((participant) => participant.id));
+      setSettlementPayerId(participants[1]?.id ?? "");
+      setSettlementReceiverId(participants[0]?.id ?? "");
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to load Group details.");
     } finally {
       setParticipantsLoading(false);
       setExpensesLoading(false);
+      setBalancesLoading(false);
     }
+  }
+
+  async function submitTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedGroup || !tagName.trim() || tagParticipantIds.length === 0) {
+      setTagError("Enter a Tag name and select at least one Participant.");
+      return;
+    }
+    setTagError("");
+    try {
+      const { tag } = await api.createTag(selectedGroup.id, { name: tagName, participantIds: tagParticipantIds });
+      setTags((current) => [...current, tag].sort((left, right) => left.name.localeCompare(right.name)));
+      setTagName("");
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : "Unable to create Tag.");
+    }
+  }
+
+  async function refreshBalances(groupID: string) {
+    try {
+      const [{ balances }, { suggestedTransfers }] = await Promise.all([
+        api.listBalances(groupID),
+        api.listSuggestedTransfers(groupID),
+      ]);
+      setBalances(balances);
+      setSuggestedTransfers(suggestedTransfers);
+      setBalanceError("");
+      setGroupBalances((current) => ({ ...current, [groupID]: balances }));
+      setUnavailableGroupBalances((current) => {
+        const next = new Set(current);
+        next.delete(groupID);
+        return next;
+      });
+    } catch {
+      setBalanceError("Unable to refresh Balances.");
+      setUnavailableGroupBalances((current) => new Set(current).add(groupID));
+    }
+  }
+
+  async function submitSettlement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedGroup) return;
+    const amountMinor = parseMoneyMinor(settlementAmount);
+    if (amountMinor === null || amountMinor <= 0 || !settlementDate || !settlementPayerId || !settlementReceiverId || settlementPayerId === settlementReceiverId) {
+      setSettlementError("Enter a positive amount, date, and two different Participants."); return;
+    }
+    try {
+      const { settlement } = await api.createSettlement(selectedGroup.id, { payerParticipantId: settlementPayerId, receiverParticipantId: settlementReceiverId, amountMinor, currency: selectedGroup.defaultCurrency, settlementDate, note: settlementNote });
+      setSettlements((current) => [settlement, ...current]); setSettlementAmount(""); setSettlementNote(""); setSettlementError(""); await refreshBalances(selectedGroup.id);
+    } catch (err) { setSettlementError(err instanceof Error ? err.message : "Unable to record Settlement."); }
+  }
+
+  async function removeSettlement(settlementID: string) {
+    if (!selectedGroup) return;
+    try { await api.deleteSettlement(selectedGroup.id, settlementID); setSettlements((current) => current.filter((settlement) => settlement.id !== settlementID)); await refreshBalances(selectedGroup.id); }
+    catch (err) { setSettlementError(err instanceof Error ? err.message : "Unable to delete Settlement."); }
   }
 
   async function submitParticipant(event: FormEvent<HTMLFormElement>) {
@@ -195,6 +318,7 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       setPayerParticipantId((current) => current || participant.id);
       setExpenseParticipantIds((current) => (current.includes(participant.id) ? current : [...current, participant.id]));
       setParticipantEmail("");
+      await refreshBalances(selectedGroup.id);
     } catch (err) {
       setParticipantError(err instanceof Error ? err.message : "Unable to add Participant.");
     }
@@ -213,10 +337,24 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
       !expenseDescription.trim() ||
       !expenseDate ||
       !payerParticipantId ||
-      expenseParticipantIds.length === 0 ||
-      !expenseParticipantIds.includes(payerParticipantId)
+      (splitType !== "tag" && (expenseParticipantIds.length === 0 || !expenseParticipantIds.includes(payerParticipantId))) ||
+      (splitType === "tag" && (!tagId || !tags.find((tag) => tag.id === tagId)?.participants.some((participant) => participant.id === payerParticipantId)))
     ) {
-      setExpenseError("Enter an Expense description, positive amount, date, Payer, and include the Payer in the Split.");
+      setExpenseError("Enter an Expense description, positive amount, date, Payer, and include the Payer in the Split or selected Tag.");
+      return;
+    }
+
+    const splits = expenseParticipantIds.map((participantId) => ({
+      participantId,
+      amountMinor: splitType === "manual_amount" ? parseMoneyMinor(splitValues[participantId] ?? "") : undefined,
+      percentage: splitType === "percentage" ? splitValues[participantId]?.trim() : undefined,
+    }));
+    if (splitType === "manual_amount" && (splits.some((split) => split.amountMinor === null) || splits.reduce((total, split) => total + (split.amountMinor ?? 0), 0) !== amountMinor)) {
+      setExpenseError("Manual Split amounts must exactly equal the Expense amount.");
+      return;
+    }
+    if (splitType === "percentage" && (!splits.every((split) => isValidPercentage(split.percentage ?? "")) || percentageBasisPoints(splits) !== 10000)) {
+      setExpenseError("Percentage Splits must exactly total 100%.");
       return;
     }
 
@@ -229,10 +367,20 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         expenseDate,
         payerParticipantId,
         participantIds: expenseParticipantIds,
+        ...(splitType === "tag" ? { splitType, tagId } : splitType !== "equal" ? {
+          splitType,
+          splits: splits.map((split) => ({
+            participantId: split.participantId,
+            ...(split.amountMinor !== undefined ? { amountMinor: split.amountMinor ?? undefined } : {}),
+            ...(split.percentage !== undefined ? { percentage: split.percentage } : {}),
+          })),
+        } : {}),
       });
       setExpenses((current) => [expense, ...current]);
+      await refreshBalances(selectedGroup.id);
       setExpenseDescription("");
       setExpenseAmount("");
+      setSplitValues({});
     } catch (err) {
       setExpenseError(err instanceof Error ? err.message : "Unable to add Expense.");
     }
@@ -244,6 +392,19 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
         ? current.filter((selectedParticipantID) => selectedParticipantID !== participantID)
         : [...current, participantID],
     );
+  }
+
+  function changeSplitType(value: "equal" | "manual_amount" | "percentage" | "tag") {
+    setSplitType(value);
+    setSplitValues((current) => {
+      if (Object.keys(current).length > 0 || value !== "percentage") return current;
+      const next: Record<string, string> = {};
+      expenseParticipantIds.forEach((participantID, index) => {
+        const basisPoints = index === expenseParticipantIds.length - 1 ? 10000 - Math.floor(10000 / expenseParticipantIds.length) * index : Math.floor(10000 / expenseParticipantIds.length);
+        next[participantID] = formatPercentageInput(basisPoints);
+      });
+      return next;
+    });
   }
 
   return (
@@ -352,6 +513,31 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                 </div>
               </section>
 
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="tags-heading">
+                <h2 id="tags-heading" className="text-xl font-semibold">Tags</h2>
+                <p className="mt-1 text-sm text-ink/60">Create a Group-level Tag for the Participants who share certain Expenses.</p>
+                <form onSubmit={submitTag} className="mt-4 space-y-3" noValidate>
+                  <label className="block text-sm font-medium">
+                    Tag name
+                    <input className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={tagName} onChange={(event) => setTagName(event.target.value)} />
+                  </label>
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium">Tag Participants</legend>
+                    {participants.map((participant) => (
+                      <label key={participant.id} className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={tagParticipantIds.includes(participant.id)} onChange={() => setTagParticipantIds((current) => current.includes(participant.id) ? current.filter((id) => id !== participant.id) : [...current, participant.id])} />
+                        {participant.user.email}
+                      </label>
+                    ))}
+                  </fieldset>
+                  {tagError ? <p className="text-sm text-coral" role="alert">{tagError}</p> : null}
+                  <button className="inline-flex rounded-md border border-ink/15 px-3 py-2 text-sm font-medium hover:bg-mist">Create Tag</button>
+                </form>
+                <div className="mt-4 space-y-2 text-sm">
+                  {tags.length === 0 ? <p className="text-ink/60">No Tags yet.</p> : tags.map((tag) => <p key={tag.id}><span className="font-medium">{tag.name}</span>: {tag.participants.map((participant) => participant.user.email).join(", ")}</p>)}
+                </div>
+              </section>
+
               <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="expenses-heading">
                 <div className="flex items-center gap-2">
                   <CircleDollarSign aria-hidden className="text-leaf" size={20} />
@@ -412,8 +598,27 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                       </select>
                     </label>
 
+                    <label className="block text-sm font-medium">
+                      Split type
+                      <select className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2 outline-none focus:border-leaf focus:ring-2 focus:ring-leaf/20" value={splitType} onChange={(event) => changeSplitType(event.target.value as "equal" | "manual_amount" | "percentage" | "tag")}>
+                        <option value="equal">Equal</option>
+                        <option value="manual_amount">Manual amount</option>
+                        <option value="percentage">Percentage</option>
+                        <option value="tag">Tag</option>
+                      </select>
+                    </label>
+
+                    {splitType === "tag" ? (
+                      <label className="block text-sm font-medium">
+                        Tag
+                        <select aria-label="Tag" className="mt-2 w-full rounded-md border border-ink/20 px-3 py-2" value={tagId} onChange={(event) => setTagId(event.target.value)}>
+                          <option value="">Select a Tag</option>
+                          {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                        </select>
+                      </label>
+                    ) : (
                     <fieldset className="space-y-2">
-                      <legend className="text-sm font-medium">Equal Split</legend>
+                      <legend className="text-sm font-medium">{splitType === "equal" ? "Equal Split" : "Split Participants"}</legend>
                       {participants.map((participant) => (
                         <label key={participant.id} className="flex items-center gap-2 text-sm">
                           <input
@@ -423,9 +628,16 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                             onChange={() => toggleExpenseParticipant(participant.id)}
                           />
                           <span>Split with {participant.user.email}</span>
+                          {splitType === "manual_amount" ? (
+                            <input aria-label={`Amount for ${participant.user.email}`} className="ml-auto w-28 rounded-md border border-ink/20 px-2 py-1" inputMode="decimal" value={splitValues[participant.id] ?? ""} onChange={(event) => setSplitValues((current) => ({ ...current, [participant.id]: event.target.value }))} />
+                          ) : null}
+                          {splitType === "percentage" ? (
+                            <input aria-label={`Percentage for ${participant.user.email}`} className="ml-auto w-28 rounded-md border border-ink/20 px-2 py-1" inputMode="decimal" value={splitValues[participant.id] ?? ""} onChange={(event) => setSplitValues((current) => ({ ...current, [participant.id]: event.target.value }))} />
+                          ) : null}
                         </label>
                       ))}
                     </fieldset>
+                    )}
 
                     {expenseError ? (
                       <p className="rounded-md border border-coral/30 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">
@@ -450,17 +662,74 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                           <p className="mt-1 text-ink/60">
                             {expense.payer.user.email} paid {formatMoney(expense.amountMinor, expense.currency)}
                           </p>
+                          <p className="mt-1 text-ink/60">Split: {formatSplitType(expense.splitType)}</p>
                         </div>
                         <span className="rounded-md bg-mist px-2 py-1 text-ink/70">{expense.expenseDate}</span>
                       </div>
                       <ul className="mt-3 space-y-1 text-ink/70">
                         {expense.splits.map((split) => (
                           <li key={split.id}>
-                            {split.participant.user.email}: {formatMoney(split.amountMinor, expense.currency)}
+                            {split.participant.user.email}: {formatMoney(split.amountMinor, expense.currency)}{expense.splitType === "percentage" ? ` (${split.percentage}%)` : ""}
                           </li>
                         ))}
                       </ul>
                     </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="settlements-heading">
+                <h2 id="settlements-heading" className="text-xl font-semibold">Settlements</h2>
+                <form onSubmit={submitSettlement} className="mt-4 space-y-3" noValidate>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm font-medium">Settlement payer<select aria-label="Settlement payer" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementPayerId} onChange={(event) => setSettlementPayerId(event.target.value)}>{participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.user.email}</option>)}</select></label>
+                    <label className="text-sm font-medium">Settlement receiver<select aria-label="Settlement receiver" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementReceiverId} onChange={(event) => setSettlementReceiverId(event.target.value)}>{participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.user.email}</option>)}</select></label>
+                    <label className="text-sm font-medium">Settlement amount<input aria-label="Settlement amount" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" inputMode="decimal" value={settlementAmount} onChange={(event) => setSettlementAmount(event.target.value)} /></label>
+                    <label className="text-sm font-medium">Settlement date<input aria-label="Settlement date" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" type="date" value={settlementDate} onChange={(event) => setSettlementDate(event.target.value)} /></label>
+                  </div>
+                  <label className="block text-sm font-medium">Note<input aria-label="Settlement note" className="mt-1 w-full rounded-md border border-ink/20 px-3 py-2" value={settlementNote} onChange={(event) => setSettlementNote(event.target.value)} /></label>
+                  {settlementError ? <p className="text-sm text-coral" role="alert">{settlementError}</p> : null}
+                  <button className="rounded-md bg-leaf px-3 py-2 text-sm font-semibold text-white">Record Settlement</button>
+                </form>
+                <div className="mt-4 space-y-2">{settlements.length === 0 ? <p className="text-sm text-ink/60">No Settlements yet.</p> : settlements.map((settlement) => <article key={settlement.id} className="flex items-center justify-between gap-3 rounded-md border border-ink/10 p-3 text-sm"><p>{settlement.payer.user.email} repaid {settlement.receiver.user.email} {formatMoney(settlement.amountMinor, settlement.currency)}{settlement.note ? ` · ${settlement.note}` : ""}</p><button className="text-coral underline" onClick={() => void removeSettlement(settlement.id)}>Delete</button></article>)}</div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="balances-heading">
+                <div className="flex items-center gap-2">
+                  <CircleDollarSign aria-hidden className="text-leaf" size={20} />
+                  <h2 id="balances-heading" className="text-xl font-semibold">
+                    Balances
+                  </h2>
+                </div>
+                <p className="mt-1 text-sm text-ink/60">{selectedGroup.name}</p>
+                <div className="mt-5 space-y-2">
+                  {balancesLoading ? <p className="text-sm text-ink/60">Loading Balances...</p> : null}
+                  {balanceError ? <p className="text-sm text-coral" role="alert">{balanceError}</p> : null}
+                  {!balancesLoading && balances.length === 0 ? <p className="text-sm text-ink/60">Everyone is settled up.</p> : null}
+                  {balances.map((balance) => (
+                    <div
+                      key={balance.participant.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-ink/10 px-3 py-2 text-sm"
+                    >
+                      <p className="font-medium">
+                        {balance.participant.user.email}: {formatBalance(balance.amountMinor, selectedGroup.defaultCurrency)}
+                      </p>
+                      <p className="text-ink/60">
+                        Paid {formatMoney(balance.paidAmountMinor, selectedGroup.defaultCurrency)} · Owed {formatMoney(balance.owedAmountMinor, selectedGroup.defaultCurrency)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-lg bg-white p-5 shadow-panel" aria-labelledby="suggested-transfers-heading">
+                <h2 id="suggested-transfers-heading" className="text-xl font-semibold">Suggested Transfers</h2>
+                <p className="mt-1 text-sm text-ink/60">A deterministic, minimum-transfer way to settle the current Balances.</p>
+                <div className="mt-5 space-y-2">
+                  {suggestedTransfers.length === 0 ? <p className="text-sm text-ink/60">Everyone is settled up.</p> : suggestedTransfers.map((transfer, index) => (
+                    <p key={`${transfer.payerParticipantId}-${transfer.receiverParticipantId}-${index}`} className="rounded-md border border-ink/10 px-3 py-2 text-sm">
+                      {transfer.payer.user.email} pays {transfer.receiver.user.email} {formatMoney(transfer.amountMinor, selectedGroup.defaultCurrency)}
+                    </p>
                   ))}
                 </div>
               </section>
@@ -491,10 +760,18 @@ function Dashboard({ user, onUser }: { user: User; onUser: (user: User | null) =
                     </div>
                     <span className="rounded-md bg-mist px-2 py-1 text-sm font-medium">{group.defaultCurrency}</span>
                   </div>
-                  <dl className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                    <Metric label="Net balance" value="THB 0.00" />
-                    <Metric label="Expenses" value="0" />
-                    <Metric label="Settlements" value="0" />
+                  <dl className="mt-5 grid gap-3 text-sm">
+                    <Metric
+                      label="Your balance"
+                      value={
+                        unavailableGroupBalances.has(group.id)
+                          ? "Balance unavailable"
+                          : formatBalance(
+                              groupBalances[group.id]?.find((balance) => balance.participant.user.id === user.id)?.amountMinor ?? 0,
+                              group.defaultCurrency,
+                            )
+                      }
+                    />
                   </dl>
                   <button
                     className="mt-5 inline-flex items-center justify-center rounded-md border border-ink/15 px-3 py-2 text-sm font-medium hover:bg-mist focus:outline-none focus:ring-2 focus:ring-leaf/30"
@@ -531,10 +808,41 @@ function parseMoneyMinor(value: string) {
   return Number(whole) * 100 + Number(cents.padEnd(2, "0"));
 }
 
+function isValidPercentage(value: string) {
+  return /^\d+(\.\d{1,2})?$/.test(value.trim());
+}
+
+function percentageBasisPoints(splits: { percentage?: string }[]) {
+  return splits.reduce((total, split) => {
+    const [whole, fraction = ""] = (split.percentage ?? "").trim().split(".");
+    return total + Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  }, 0);
+}
+
+function formatPercentageInput(basisPoints: number) {
+  return (basisPoints / 100).toFixed(2).replace(/\.00$/, "");
+}
+
+function formatSplitType(splitType: Expense["splitType"]) {
+  if (splitType === "manual_amount") return "Manual amount";
+  if (splitType === "percentage") return "Percentage";
+  return "Equal";
+}
+
 function formatMoney(amountMinor: number, currency: string) {
   const sign = amountMinor < 0 ? "-" : "";
   const absolute = Math.abs(amountMinor);
   const whole = Math.floor(absolute / 100);
   const cents = String(absolute % 100).padStart(2, "0");
   return `${sign}${currency} ${whole}.${cents}`;
+}
+
+function formatBalance(amountMinor: number, currency: string) {
+  if (amountMinor > 0) {
+    return `You are owed ${formatMoney(amountMinor, currency)}`;
+  }
+  if (amountMinor < 0) {
+    return `You owe ${formatMoney(-amountMinor, currency)}`;
+  }
+  return "Settled up";
 }

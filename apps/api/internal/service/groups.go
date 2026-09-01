@@ -20,6 +20,52 @@ type GroupRepository interface {
 	ListParticipantsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Participant, error)
 	CreateExpenseWithSplits(ctx context.Context, expense *domain.Expense) error
 	ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error)
+	CreateSettlement(ctx context.Context, settlement *domain.Settlement) error
+	ListSettlementsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Settlement, error)
+	DeleteSettlement(ctx context.Context, groupID, settlementID uuid.UUID) error
+	CreateTag(ctx context.Context, tag *domain.Tag) error
+	ListTagsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Tag, error)
+	FindTagByID(ctx context.Context, groupID, tagID uuid.UUID) (*domain.Tag, error)
+	FindTagByName(ctx context.Context, groupID uuid.UUID, name string) (*domain.Tag, error)
+}
+
+func (s *GroupService) CreateTag(ctx context.Context, groupID, actorID uuid.UUID, name string, participantIDs []uuid.UUID) (*domain.Tag, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	participantIDs = uniqueParticipantIDs(participantIDs)
+	if name == "" || len(participantIDs) == 0 {
+		return nil, ErrValidation
+	}
+	if _, err := s.store.FindTagByName(ctx, groupID, name); err == nil {
+		return nil, ErrValidation
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return nil, err
+	}
+	participants := make([]domain.Participant, 0, len(participantIDs))
+	for _, participantID := range participantIDs {
+		participant, err := s.store.FindParticipantByID(ctx, groupID, participantID)
+		if errors.Is(err, repository.ErrNotFound) || err == nil && !participant.Active {
+			return nil, ErrValidation
+		}
+		if err != nil {
+			return nil, err
+		}
+		participants = append(participants, *participant)
+	}
+	tag := &domain.Tag{GroupID: groupID, Name: name, Participants: participants}
+	if err := s.store.CreateTag(ctx, tag); err != nil {
+		return nil, err
+	}
+	return tag, nil
+}
+
+func (s *GroupService) ListTags(ctx context.Context, groupID, actorID uuid.UUID) ([]domain.Tag, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	return s.store.ListTagsForGroup(ctx, groupID)
 }
 
 type GroupService struct {

@@ -4,13 +4,13 @@
 
 **Blocked by:** 02 - Create Expense Ledger with Equal Splits.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Balances are calculated from Expense and Split records rather than stored as source of truth.
-- [ ] Balance calculation handles each Participant's paid amount and owed amount.
-- [ ] Equal Split rounding produces stable Balance results.
-- [ ] Group cards show a lightweight Balance summary.
-- [ ] The Group detail view shows each Participant's Balance.
-- [ ] OpenAPI documents the Balance response shape.
-- [ ] Backend service tests cover one payer, multiple Participants, uneven rounding, and multiple Expenses.
-- [ ] Frontend tests cover Balance rendering on Group cards and Group detail.
+- [x] Balances are calculated from Expense and Split records rather than stored as source of truth.
+- [x] Balance calculation handles each Participant's paid amount and owed amount.
+- [x] Equal Split rounding produces stable Balance results.
+- [x] Group cards show a lightweight Balance summary.
+- [x] The Group detail view shows each Participant's Balance.
+- [x] OpenAPI documents the Balance response shape.
+- [x] Backend service tests cover one payer, multiple Participants, uneven rounding, and multiple Expenses.
+- [x] Frontend tests cover Balance rendering on Group cards and Group detail.

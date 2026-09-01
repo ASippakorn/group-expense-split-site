@@ -23,6 +23,7 @@ export type ExpenseSplit = {
   participantId: string;
   participant: Participant;
   amountMinor: number;
+  percentage?: string;
 };
 
 export type Expense = {
@@ -31,11 +32,27 @@ export type Expense = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  splitType: "equal";
+  splitType: "equal" | "manual_amount" | "percentage" | "tag";
+  tagId?: string;
   payerParticipantId: string;
   payer: Participant;
   splits: ExpenseSplit[];
 };
+
+export type Tag = {
+  id: string;
+  name: string;
+  participants: Participant[];
+};
+
+export type Balance = {
+  participant: Participant;
+  paidAmountMinor: number;
+  owedAmountMinor: number;
+  amountMinor: number;
+};
+export type Settlement = { id: string; payerParticipantId: string; payer: Participant; receiverParticipantId: string; receiver: Participant; amountMinor: number; currency: string; settlementDate: string; note: string };
+export type SuggestedTransfer = { payerParticipantId: string; payer: Participant; receiverParticipantId: string; receiver: Participant; amountMinor: number };
 
 type ApiError = {
   error: {
@@ -123,6 +140,27 @@ export function listExpenses(groupId: string) {
   return request<{ expenses: Expense[] }>(`/groups/${groupId}/expenses`);
 }
 
+export function listBalances(groupId: string) {
+  return request<{ balances: Balance[] }>(`/groups/${groupId}/balances`);
+}
+export function listSuggestedTransfers(groupId: string) {
+  return request<{ suggestedTransfers: SuggestedTransfer[] }>(`/groups/${groupId}/suggested-transfers`);
+}
+export function listSettlements(groupId: string) { return request<{ settlements: Settlement[] }>(`/groups/${groupId}/settlements`); }
+export function createSettlement(groupId: string, input: { payerParticipantId: string; receiverParticipantId: string; amountMinor: number; currency: string; settlementDate: string; note: string }) { return request<{ settlement: Settlement }>(`/groups/${groupId}/settlements`, { method: "POST", body: JSON.stringify(input) }); }
+export function deleteSettlement(groupId: string, settlementId: string) { return request<void>(`/groups/${groupId}/settlements/${settlementId}`, { method: "DELETE" }); }
+
+export function listTags(groupId: string) {
+  return request<{ tags: Tag[] }>(`/groups/${groupId}/tags`);
+}
+
+export function createTag(groupId: string, input: { name: string; participantIds: string[] }) {
+  return request<{ tag: Tag }>(`/groups/${groupId}/tags`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function createExpense(
   groupId: string,
   input: {
@@ -132,6 +170,9 @@ export function createExpense(
     expenseDate: string;
     payerParticipantId: string;
     participantIds: string[];
+    splitType?: "equal" | "manual_amount" | "percentage" | "tag";
+    splits?: { participantId: string; amountMinor?: number; percentage?: string }[];
+    tagId?: string;
   },
 ) {
   return request<{ expense: Expense }>(`/groups/${groupId}/expenses`, {

@@ -2,6 +2,8 @@ package http
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,12 +13,21 @@ import (
 )
 
 type createExpenseRequest struct {
-	Description        string   `json:"description"`
-	AmountMinor        int64    `json:"amountMinor"`
-	Currency           string   `json:"currency"`
-	ExpenseDate        string   `json:"expenseDate"`
-	PayerParticipantID string   `json:"payerParticipantId"`
-	ParticipantIDs     []string `json:"participantIds"`
+	Description        string                      `json:"description"`
+	AmountMinor        int64                       `json:"amountMinor"`
+	Currency           string                      `json:"currency"`
+	ExpenseDate        string                      `json:"expenseDate"`
+	PayerParticipantID string                      `json:"payerParticipantId"`
+	ParticipantIDs     []string                    `json:"participantIds"`
+	SplitType          string                      `json:"splitType"`
+	Splits             []createExpenseSplitRequest `json:"splits"`
+	TagID              string                      `json:"tagId"`
+}
+
+type createExpenseSplitRequest struct {
+	ParticipantID string `json:"participantId"`
+	AmountMinor   int64  `json:"amountMinor"`
+	Percentage    string `json:"percentage"`
 }
 
 type expenseResponse struct {
@@ -28,6 +39,7 @@ type expenseResponse struct {
 	SplitType          string                 `json:"splitType"`
 	PayerParticipantID string                 `json:"payerParticipantId"`
 	Payer              participantResponse    `json:"payer"`
+	TagID              string                 `json:"tagId,omitempty"`
 	Splits             []expenseSplitResponse `json:"splits"`
 }
 
@@ -36,6 +48,7 @@ type expenseSplitResponse struct {
 	ParticipantID string              `json:"participantId"`
 	Participant   participantResponse `json:"participant"`
 	AmountMinor   int64               `json:"amountMinor"`
+	Percentage    string              `json:"percentage,omitempty"`
 }
 
 func (s *Server) createExpense(c *fiber.Ctx) error {
@@ -54,13 +67,31 @@ func (s *Server) createExpense(c *fiber.Ctx) error {
 		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Expense Participants are invalid.", nil)
 	}
 
-	expense, err := s.groups.CreateEqualExpense(c.UserContext(), groupID, currentUser(c).ID, service.CreateEqualExpenseInput{
+	splits, err := parseExpenseSplits(req.Splits)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Split values are invalid.", nil)
+	}
+	splitType := req.SplitType
+	if splitType == "" {
+		splitType = domain.SplitTypeEqual
+	}
+	tagID := uuid.Nil
+	if strings.TrimSpace(req.TagID) != "" {
+		tagID, err = uuid.Parse(req.TagID)
+		if err != nil {
+			return writeError(c, fiber.StatusBadRequest, "VALIDATION_FAILED", "Tag details are invalid.", nil)
+		}
+	}
+	expense, err := s.groups.CreateExpense(c.UserContext(), groupID, currentUser(c).ID, service.CreateExpenseInput{
 		Description:        req.Description,
 		AmountMinor:        req.AmountMinor,
 		Currency:           req.Currency,
 		ExpenseDate:        req.ExpenseDate,
 		PayerParticipantID: payerParticipantID,
 		ParticipantIDs:     participantIDs,
+		SplitType:          splitType,
+		Splits:             splits,
+		TagID:              tagID,
 	})
 	if errors.Is(err, service.ErrForbidden) {
 		return writeError(c, fiber.StatusForbidden, "FORBIDDEN", "You cannot create Expenses for this Group.", nil)
@@ -73,6 +104,49 @@ func (s *Server) createExpense(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"expense": toExpenseResponse(expense)})
+}
+
+func parseExpenseSplits(values []createExpenseSplitRequest) ([]service.CreateSplitInput, error) {
+	splits := make([]service.CreateSplitInput, 0, len(values))
+	for _, value := range values {
+		participantID, err := uuid.Parse(value.ParticipantID)
+		if err != nil {
+			return nil, err
+		}
+		percentageBasisPoints := int64(0)
+		if strings.TrimSpace(value.Percentage) != "" {
+			percentageBasisPoints, err = parsePercentageBasisPoints(value.Percentage)
+			if err != nil {
+				return nil, err
+			}
+		}
+		splits = append(splits, service.CreateSplitInput{ParticipantID: participantID, AmountMinor: value.AmountMinor, PercentageBasisPoints: percentageBasisPoints})
+	}
+	return splits, nil
+}
+
+func parsePercentageBasisPoints(value string) (int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.Contains(trimmed, ".") {
+		trimmed += ".0"
+	}
+	parts := strings.Split(trimmed, ".")
+	if len(parts) != 2 || len(parts[1]) > 2 || parts[0] == "" {
+		return 0, errors.New("invalid percentage")
+	}
+	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || whole < 0 {
+		return 0, errors.New("invalid percentage")
+	}
+	fraction := parts[1]
+	if len(fraction) == 1 {
+		fraction += "0"
+	}
+	fractionValue, err := strconv.ParseInt(fraction, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return whole*100 + fractionValue, nil
 }
 
 func (s *Server) listExpenses(c *fiber.Ctx) error {
@@ -121,6 +195,7 @@ func toExpenseResponse(expense *domain.Expense) expenseResponse {
 			ParticipantID: expense.Splits[i].ParticipantID.String(),
 			Participant:   toParticipantResponse(&expense.Splits[i].Participant),
 			AmountMinor:   expense.Splits[i].AmountMinor,
+			Percentage:    formatPercentage(expense.Splits[i].PercentageBasisPoints),
 		})
 	}
 
@@ -133,6 +208,29 @@ func toExpenseResponse(expense *domain.Expense) expenseResponse {
 		SplitType:          expense.SplitType,
 		PayerParticipantID: expense.PayerParticipantID.String(),
 		Payer:              toParticipantResponse(&expense.PayerParticipant),
+		TagID:              optionalUUIDString(expense.TagID),
 		Splits:             splits,
 	}
+}
+
+func optionalUUIDString(value *uuid.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
+}
+
+func formatPercentage(basisPoints int64) string {
+	if basisPoints == 0 {
+		return ""
+	}
+	fraction := strconv.FormatInt(basisPoints%100, 10)
+	if len(fraction) == 1 {
+		fraction = "0" + fraction
+	}
+	fraction = strings.TrimRight(fraction, "0")
+	if fraction == "" {
+		return strconv.FormatInt(basisPoints/100, 10)
+	}
+	return strconv.FormatInt(basisPoints/100, 10) + "." + fraction
 }

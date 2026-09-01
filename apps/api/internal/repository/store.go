@@ -141,6 +141,7 @@ func (s *Store) CreateExpenseWithSplits(ctx context.Context, expense *domain.Exp
 			Currency:           expense.Currency,
 			ExpenseDate:        expense.ExpenseDate,
 			SplitType:          expense.SplitType,
+			TagID:              expense.TagID,
 		}
 		if err := tx.Create(record).Error; err != nil {
 			return err
@@ -159,6 +160,34 @@ func (s *Store) CreateExpenseWithSplits(ctx context.Context, expense *domain.Exp
 	})
 }
 
+func (s *Store) CreateTag(ctx context.Context, tag *domain.Tag) error {
+	return s.db.WithContext(ctx).Omit("Participants.*").Create(tag).Error
+}
+
+func (s *Store) ListTagsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Tag, error) {
+	var tags []domain.Tag
+	err := s.db.WithContext(ctx).Preload("Participants.User").Where("group_id = ?", groupID).Order("name ASC").Find(&tags).Error
+	return tags, err
+}
+
+func (s *Store) FindTagByID(ctx context.Context, groupID, tagID uuid.UUID) (*domain.Tag, error) {
+	var tag domain.Tag
+	err := s.db.WithContext(ctx).Preload("Participants.User").Where("id = ? AND group_id = ?", tagID, groupID).First(&tag).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &tag, err
+}
+
+func (s *Store) FindTagByName(ctx context.Context, groupID uuid.UUID, name string) (*domain.Tag, error) {
+	var tag domain.Tag
+	err := s.db.WithContext(ctx).Where("group_id = ? AND name = ?", groupID, name).First(&tag).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &tag, err
+}
+
 func (s *Store) ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Expense, error) {
 	var expenses []domain.Expense
 	err := s.db.WithContext(ctx).
@@ -171,4 +200,25 @@ func (s *Store) ListExpensesForGroup(ctx context.Context, groupID uuid.UUID) ([]
 		Order("expense_date DESC, created_at DESC").
 		Find(&expenses).Error
 	return expenses, err
+}
+
+func (s *Store) CreateSettlement(ctx context.Context, settlement *domain.Settlement) error {
+	return s.db.WithContext(ctx).Omit("PayerParticipant", "ReceiverParticipant").Create(settlement).Error
+}
+
+func (s *Store) ListSettlementsForGroup(ctx context.Context, groupID uuid.UUID) ([]domain.Settlement, error) {
+	var settlements []domain.Settlement
+	err := s.db.WithContext(ctx).Preload("PayerParticipant.User").Preload("ReceiverParticipant.User").Where("group_id = ?", groupID).Order("settlement_date DESC, created_at DESC").Find(&settlements).Error
+	return settlements, err
+}
+
+func (s *Store) DeleteSettlement(ctx context.Context, groupID, settlementID uuid.UUID) error {
+	result := s.db.WithContext(ctx).Delete(&domain.Settlement{}, "id = ? AND group_id = ?", settlementID, groupID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

@@ -123,13 +123,49 @@ type fakeGroupStore struct {
 	usersByEmail map[string]*domain.User
 	participants map[string]*domain.Participant
 	expenses     []domain.Expense
+	settlements  []domain.Settlement
+	tags         map[uuid.UUID]*domain.Tag
 }
 
 func newFakeGroupStore() *fakeGroupStore {
 	return &fakeGroupStore{
 		usersByEmail: make(map[string]*domain.User),
 		participants: make(map[string]*domain.Participant),
+		tags:         make(map[uuid.UUID]*domain.Tag),
 	}
+}
+
+func (s *fakeGroupStore) FindTagByID(_ context.Context, groupID, tagID uuid.UUID) (*domain.Tag, error) {
+	tag, ok := s.tags[tagID]
+	if !ok || tag.GroupID != groupID {
+		return nil, repository.ErrNotFound
+	}
+	return tag, nil
+}
+
+func (s *fakeGroupStore) FindTagByName(_ context.Context, groupID uuid.UUID, name string) (*domain.Tag, error) {
+	for _, tag := range s.tags {
+		if tag.GroupID == groupID && tag.Name == name {
+			return tag, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (s *fakeGroupStore) CreateTag(_ context.Context, tag *domain.Tag) error {
+	tag.ID = uuid.New()
+	s.tags[tag.ID] = tag
+	return nil
+}
+
+func (s *fakeGroupStore) ListTagsForGroup(_ context.Context, groupID uuid.UUID) ([]domain.Tag, error) {
+	tags := make([]domain.Tag, 0)
+	for _, tag := range s.tags {
+		if tag.GroupID == groupID {
+			tags = append(tags, *tag)
+		}
+	}
+	return tags, nil
 }
 
 func participantKey(groupID, userID uuid.UUID) string {
@@ -208,4 +244,30 @@ func (s *fakeGroupStore) ListExpensesForGroup(_ context.Context, groupID uuid.UU
 		}
 	}
 	return expenses, nil
+}
+
+func (s *fakeGroupStore) CreateSettlement(_ context.Context, settlement *domain.Settlement) error {
+	settlement.ID = uuid.New()
+	s.settlements = append(s.settlements, *settlement)
+	return nil
+}
+
+func (s *fakeGroupStore) ListSettlementsForGroup(_ context.Context, groupID uuid.UUID) ([]domain.Settlement, error) {
+	settlements := make([]domain.Settlement, 0)
+	for _, settlement := range s.settlements {
+		if settlement.GroupID == groupID {
+			settlements = append(settlements, settlement)
+		}
+	}
+	return settlements, nil
+}
+
+func (s *fakeGroupStore) DeleteSettlement(_ context.Context, groupID, settlementID uuid.UUID) error {
+	for index, settlement := range s.settlements {
+		if settlement.GroupID == groupID && settlement.ID == settlementID {
+			s.settlements = append(s.settlements[:index], s.settlements[index+1:]...)
+			return nil
+		}
+	}
+	return repository.ErrNotFound
 }

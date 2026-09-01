@@ -21,22 +21,131 @@ type CreateEqualExpenseInput struct {
 	ParticipantIDs     []uuid.UUID
 }
 
+type CreateSplitInput struct {
+	ParticipantID         uuid.UUID
+	AmountMinor           int64
+	PercentageBasisPoints int64
+}
+
+type CreateExpenseInput struct {
+	Description        string
+	AmountMinor        int64
+	Currency           string
+	ExpenseDate        string
+	PayerParticipantID uuid.UUID
+	SplitType          string
+	ParticipantIDs     []uuid.UUID
+	Splits             []CreateSplitInput
+	TagID              uuid.UUID
+}
+
+type Balance struct {
+	ParticipantID   uuid.UUID
+	Participant     domain.Participant
+	PaidAmountMinor int64
+	OwedAmountMinor int64
+	AmountMinor     int64
+}
+
+type SuggestedTransfer struct {
+	PayerParticipantID    uuid.UUID
+	PayerParticipant      domain.Participant
+	ReceiverParticipantID uuid.UUID
+	ReceiverParticipant   domain.Participant
+	AmountMinor           int64
+}
+
+type CreateSettlementInput struct {
+	PayerParticipantID    uuid.UUID
+	ReceiverParticipantID uuid.UUID
+	AmountMinor           int64
+	Currency              string
+	SettlementDate        string
+	Note                  string
+}
+
+func (s *GroupService) CreateSettlement(ctx context.Context, groupID, actorID uuid.UUID, input CreateSettlementInput) (*domain.Settlement, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	payer, payerErr := s.store.FindParticipantByID(ctx, groupID, input.PayerParticipantID)
+	receiver, receiverErr := s.store.FindParticipantByID(ctx, groupID, input.ReceiverParticipantID)
+	date, dateErr := parseLedgerDate(input.SettlementDate)
+	currency := strings.ToUpper(strings.TrimSpace(input.Currency))
+	if currency == "" {
+		currency = domain.DefaultCurrency
+	}
+	if payerErr != nil || receiverErr != nil || !payer.Active || !receiver.Active || input.PayerParticipantID == input.ReceiverParticipantID || input.AmountMinor <= 0 || len(currency) != 3 || dateErr != nil {
+		return nil, ErrValidation
+	}
+	if actorID != payer.UserID && actorID != receiver.UserID {
+		return nil, ErrForbidden
+	}
+	settlement := &domain.Settlement{GroupID: groupID, PayerParticipantID: payer.ID, PayerParticipant: *payer, ReceiverParticipantID: receiver.ID, ReceiverParticipant: *receiver, AmountMinor: input.AmountMinor, Currency: currency, SettlementDate: date, Note: strings.TrimSpace(input.Note)}
+	if err := s.store.CreateSettlement(ctx, settlement); err != nil {
+		return nil, err
+	}
+	return settlement, nil
+}
+
+func (s *GroupService) ListSettlements(ctx context.Context, groupID, actorID uuid.UUID) ([]domain.Settlement, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+	return s.store.ListSettlementsForGroup(ctx, groupID)
+}
+
+func (s *GroupService) DeleteSettlement(ctx context.Context, groupID, actorID, settlementID uuid.UUID) error {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return err
+	}
+	return s.store.DeleteSettlement(ctx, groupID, settlementID)
+}
+
 func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateEqualExpenseInput) (*domain.Expense, error) {
+	return s.CreateExpense(ctx, groupID, actorID, CreateExpenseInput{
+		Description: input.Description, AmountMinor: input.AmountMinor, Currency: input.Currency, ExpenseDate: input.ExpenseDate,
+		PayerParticipantID: input.PayerParticipantID, SplitType: domain.SplitTypeEqual, ParticipantIDs: input.ParticipantIDs,
+	})
+}
+
+func (s *GroupService) CreateExpense(ctx context.Context, groupID, actorID uuid.UUID, input CreateExpenseInput) (*domain.Expense, error) {
 	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
 		return nil, err
 	}
 
 	description := strings.TrimSpace(input.Description)
 	currency := strings.ToUpper(strings.TrimSpace(input.Currency))
-	expenseDate, err := parseExpenseDate(input.ExpenseDate)
+	expenseDate, err := parseLedgerDate(input.ExpenseDate)
 	if currency == "" {
 		currency = domain.DefaultCurrency
 	}
-	if err != nil || description == "" || input.AmountMinor <= 0 || len(currency) != 3 || len(input.ParticipantIDs) == 0 {
+	if err != nil || description == "" || input.AmountMinor <= 0 || len(currency) != 3 {
 		return nil, ErrValidation
 	}
 
 	participantIDs := uniqueParticipantIDs(input.ParticipantIDs)
+	if input.SplitType == domain.SplitTypeManualAmount || input.SplitType == domain.SplitTypePercentage {
+		participantIDs = splitParticipantIDs(input.Splits)
+	}
+	if input.SplitType == domain.SplitTypeTag {
+		tag, err := s.store.FindTagByID(ctx, groupID, input.TagID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrValidation
+		}
+		if err != nil {
+			return nil, err
+		}
+		participantIDs = make([]uuid.UUID, 0, len(tag.Participants))
+		for _, participant := range tag.Participants {
+			if participant.Active {
+				participantIDs = append(participantIDs, participant.ID)
+			}
+		}
+	}
+	if len(participantIDs) == 0 {
+		return nil, ErrValidation
+	}
 	selected := make(map[uuid.UUID]domain.Participant, len(participantIDs))
 	for _, participantID := range participantIDs {
 		participant, err := s.store.FindParticipantByID(ctx, groupID, participantID)
@@ -57,7 +166,22 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 	sort.Slice(participantIDs, func(i, j int) bool {
 		return participantIDs[i].String() < participantIDs[j].String()
 	})
-	splits := equalSplits(input.AmountMinor, participantIDs)
+	var splits []domain.ExpenseSplit
+	switch input.SplitType {
+	case domain.SplitTypeEqual:
+		splits = equalSplits(input.AmountMinor, participantIDs)
+	case domain.SplitTypeManualAmount:
+		splits, err = manualAmountSplits(input.AmountMinor, participantIDs, input.Splits)
+	case domain.SplitTypePercentage:
+		splits, err = percentageSplits(input.AmountMinor, participantIDs, input.Splits)
+	case domain.SplitTypeTag:
+		splits = equalSplits(input.AmountMinor, participantIDs)
+	default:
+		return nil, ErrValidation
+	}
+	if err != nil {
+		return nil, ErrValidation
+	}
 	for index := range splits {
 		splits[index].Participant = selected[splits[index].ParticipantID]
 	}
@@ -70,7 +194,8 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 		AmountMinor:        input.AmountMinor,
 		Currency:           currency,
 		ExpenseDate:        expenseDate,
-		SplitType:          domain.SplitTypeEqual,
+		SplitType:          input.SplitType,
+		TagID:              tagIDForExpense(input.SplitType, input.TagID),
 		Splits:             splits,
 	}
 
@@ -80,11 +205,250 @@ func (s *GroupService) CreateEqualExpense(ctx context.Context, groupID, actorID 
 	return expense, nil
 }
 
+func tagIDForExpense(splitType string, tagID uuid.UUID) *uuid.UUID {
+	if splitType != domain.SplitTypeTag || tagID == uuid.Nil {
+		return nil
+	}
+	return &tagID
+}
+
+func splitParticipantIDs(splits []CreateSplitInput) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(splits))
+	for _, split := range splits {
+		ids = append(ids, split.ParticipantID)
+	}
+	return uniqueParticipantIDs(ids)
+}
+
+func manualAmountSplits(amountMinor int64, participantIDs []uuid.UUID, inputs []CreateSplitInput) ([]domain.ExpenseSplit, error) {
+	if len(participantIDs) != len(inputs) {
+		return nil, ErrValidation
+	}
+	amounts := make(map[uuid.UUID]int64, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		if input.AmountMinor < 0 {
+			return nil, ErrValidation
+		}
+		if _, exists := amounts[input.ParticipantID]; exists {
+			return nil, ErrValidation
+		}
+		amounts[input.ParticipantID] = input.AmountMinor
+		total += input.AmountMinor
+	}
+	if total != amountMinor {
+		return nil, ErrValidation
+	}
+	splits := make([]domain.ExpenseSplit, 0, len(participantIDs))
+	for _, participantID := range participantIDs {
+		splits = append(splits, domain.ExpenseSplit{ParticipantID: participantID, AmountMinor: amounts[participantID]})
+	}
+	return splits, nil
+}
+
+func percentageSplits(amountMinor int64, participantIDs []uuid.UUID, inputs []CreateSplitInput) ([]domain.ExpenseSplit, error) {
+	if len(participantIDs) != len(inputs) {
+		return nil, ErrValidation
+	}
+	percentages := make(map[uuid.UUID]int64, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		if input.PercentageBasisPoints <= 0 {
+			return nil, ErrValidation
+		}
+		if _, exists := percentages[input.ParticipantID]; exists {
+			return nil, ErrValidation
+		}
+		percentages[input.ParticipantID] = input.PercentageBasisPoints
+		total += input.PercentageBasisPoints
+	}
+	if total != 10000 {
+		return nil, ErrValidation
+	}
+	splits := make([]domain.ExpenseSplit, 0, len(participantIDs))
+	var allocated int64
+	for _, participantID := range participantIDs {
+		amount := amountMinor * percentages[participantID] / 10000
+		allocated += amount
+		splits = append(splits, domain.ExpenseSplit{ParticipantID: participantID, AmountMinor: amount, PercentageBasisPoints: percentages[participantID]})
+	}
+	sort.SliceStable(splits, func(i, j int) bool {
+		leftRemainder := (amountMinor * splits[i].PercentageBasisPoints) % 10000
+		rightRemainder := (amountMinor * splits[j].PercentageBasisPoints) % 10000
+		return leftRemainder > rightRemainder
+	})
+	for index := int64(0); index < amountMinor-allocated; index++ {
+		splits[index].AmountMinor++
+	}
+	sort.Slice(splits, func(i, j int) bool { return splits[i].ParticipantID.String() < splits[j].ParticipantID.String() })
+	return splits, nil
+}
+
 func (s *GroupService) ListExpenses(ctx context.Context, groupID, actorID uuid.UUID) ([]domain.Expense, error) {
 	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
 		return nil, err
 	}
 	return s.store.ListExpensesForGroup(ctx, groupID)
+}
+
+func (s *GroupService) ListBalances(ctx context.Context, groupID, actorID uuid.UUID) ([]Balance, error) {
+	if _, err := s.requireActiveParticipant(ctx, groupID, actorID); err != nil {
+		return nil, err
+	}
+
+	participants, err := s.store.ListParticipantsForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	expenses, err := s.store.ListExpensesForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	settlements, err := s.store.ListSettlementsForGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+
+	balancesByParticipantID := make(map[uuid.UUID]Balance, len(participants))
+	for _, participant := range participants {
+		balancesByParticipantID[participant.ID] = Balance{ParticipantID: participant.ID, Participant: participant}
+	}
+	for _, settlement := range settlements {
+		payer := balancesByParticipantID[settlement.PayerParticipantID]
+		payer.PaidAmountMinor += settlement.AmountMinor
+		balancesByParticipantID[settlement.PayerParticipantID] = payer
+		receiver := balancesByParticipantID[settlement.ReceiverParticipantID]
+		receiver.OwedAmountMinor += settlement.AmountMinor
+		balancesByParticipantID[settlement.ReceiverParticipantID] = receiver
+	}
+	for _, expense := range expenses {
+		balance := balancesByParticipantID[expense.PayerParticipantID]
+		balance.PaidAmountMinor += expense.AmountMinor
+		balancesByParticipantID[expense.PayerParticipantID] = balance
+
+		for _, split := range expense.Splits {
+			balance := balancesByParticipantID[split.ParticipantID]
+			balance.OwedAmountMinor += split.AmountMinor
+			balancesByParticipantID[split.ParticipantID] = balance
+		}
+	}
+
+	participantIDs := make([]uuid.UUID, 0, len(balancesByParticipantID))
+	for participantID := range balancesByParticipantID {
+		participantIDs = append(participantIDs, participantID)
+	}
+	sort.Slice(participantIDs, func(i, j int) bool {
+		return participantIDs[i].String() < participantIDs[j].String()
+	})
+
+	balances := make([]Balance, 0, len(participantIDs))
+	for _, participantID := range participantIDs {
+		balance := balancesByParticipantID[participantID]
+		balance.AmountMinor = balance.PaidAmountMinor - balance.OwedAmountMinor
+		balances = append(balances, balance)
+	}
+	return balances, nil
+}
+
+func (s *GroupService) ListSuggestedTransfers(ctx context.Context, groupID, actorID uuid.UUID) ([]SuggestedTransfer, error) {
+	balances, err := s.ListBalances(ctx, groupID, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	return suggestedTransfers(balances), nil
+}
+
+type transferBalance struct {
+	participant domain.Participant
+	amountMinor int64
+}
+
+func suggestedTransfers(balances []Balance) []SuggestedTransfer {
+	debtors := make([]transferBalance, 0)
+	creditors := make([]transferBalance, 0)
+	for _, balance := range balances {
+		switch {
+		case balance.AmountMinor < 0:
+			debtors = append(debtors, transferBalance{participant: balance.Participant, amountMinor: -balance.AmountMinor})
+		case balance.AmountMinor > 0:
+			creditors = append(creditors, transferBalance{participant: balance.Participant, amountMinor: balance.AmountMinor})
+		}
+	}
+
+	sortTransferBalancesByParticipantID(debtors)
+	sortTransferBalancesByParticipantID(creditors)
+	return minimumSuggestedTransfers(debtors, creditors)
+}
+
+func minimumSuggestedTransfers(debtors, creditors []transferBalance) []SuggestedTransfer {
+	debtorIndex := firstNonZeroTransferBalance(debtors)
+	if debtorIndex == -1 {
+		return []SuggestedTransfer{}
+	}
+
+	var best []SuggestedTransfer
+	for creditorIndex, creditor := range creditors {
+		if creditor.amountMinor == 0 {
+			continue
+		}
+		amount := minInt64(debtors[debtorIndex].amountMinor, creditor.amountMinor)
+		nextDebtors := append([]transferBalance(nil), debtors...)
+		nextCreditors := append([]transferBalance(nil), creditors...)
+		nextDebtors[debtorIndex].amountMinor -= amount
+		nextCreditors[creditorIndex].amountMinor -= amount
+		candidate := append([]SuggestedTransfer{{
+			PayerParticipantID:    debtors[debtorIndex].participant.ID,
+			PayerParticipant:      debtors[debtorIndex].participant,
+			ReceiverParticipantID: creditor.participant.ID,
+			ReceiverParticipant:   creditor.participant,
+			AmountMinor:           amount,
+		}}, minimumSuggestedTransfers(nextDebtors, nextCreditors)...)
+		if len(best) == 0 || len(candidate) < len(best) || len(candidate) == len(best) && compareSuggestedTransfers(candidate, best) < 0 {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func firstNonZeroTransferBalance(balances []transferBalance) int {
+	for index, balance := range balances {
+		if balance.amountMinor > 0 {
+			return index
+		}
+	}
+	return -1
+}
+
+func sortTransferBalancesByParticipantID(balances []transferBalance) {
+	sort.Slice(balances, func(i, j int) bool {
+		return balances[i].participant.ID.String() < balances[j].participant.ID.String()
+	})
+}
+
+func compareSuggestedTransfers(left, right []SuggestedTransfer) int {
+	for index := range left {
+		if left[index].PayerParticipantID != right[index].PayerParticipantID {
+			return strings.Compare(left[index].PayerParticipantID.String(), right[index].PayerParticipantID.String())
+		}
+		if left[index].ReceiverParticipantID != right[index].ReceiverParticipantID {
+			return strings.Compare(left[index].ReceiverParticipantID.String(), right[index].ReceiverParticipantID.String())
+		}
+		if left[index].AmountMinor != right[index].AmountMinor {
+			if left[index].AmountMinor < right[index].AmountMinor {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func (s *GroupService) requireActiveParticipant(ctx context.Context, groupID, userID uuid.UUID) (*domain.Participant, error) {
@@ -98,7 +462,7 @@ func (s *GroupService) requireActiveParticipant(ctx context.Context, groupID, us
 	return actor, nil
 }
 
-func parseExpenseDate(value string) (time.Time, error) {
+func parseLedgerDate(value string) (time.Time, error) {
 	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
 	if err != nil {
 		return time.Time{}, err

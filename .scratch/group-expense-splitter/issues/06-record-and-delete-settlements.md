@@ -4,15 +4,19 @@
 
 **Blocked by:** 03 - Calculate Group Balances.
 
-**Status:** ready-for-agent
+**Status:** ready-for-review
 
-- [ ] Either side of a repayment can record a Settlement.
-- [ ] A Settlement records payer, receiver, amount, currency, date, and note.
-- [ ] Settlement amounts may exceed the currently owed amount.
-- [ ] Settlements affect Balances immediately.
-- [ ] A Settlement can be deleted but not edited in place.
-- [ ] Deleted Settlements no longer affect Balances.
-- [ ] The Group detail view lists Settlements and supports recording and deleting them.
-- [ ] OpenAPI documents Settlement routes.
-- [ ] Backend tests cover recording, overpayment, deletion, Balance changes, and authorization.
-- [ ] Frontend tests cover Settlement form success, deletion, and Balance update display.
+- [x] Either side of a repayment can record a Settlement.
+- [x] A Settlement records payer, receiver, amount, currency, date, and note.
+- [x] Settlement amounts may exceed the currently owed amount.
+- [x] Settlements affect Balances immediately.
+- [x] A Settlement can be deleted but not edited in place.
+- [x] Deleted Settlements no longer affect Balances.
+- [x] The Group detail view lists Settlements and supports recording and deleting them.
+- [x] OpenAPI documents Settlement routes.
+- [x] Backend tests cover recording, overpayment, deletion, Balance changes, and authorization.
+- [x] Frontend tests cover Settlement form success, deletion, and Balance update display.
+
+## Comments
+
+- Implemented Settlement persistence, authenticated API routes, derived Balance updates, Group-detail form/list/delete controls, OpenAPI documentation, and focused service/frontend coverage. Awaiting final review.
